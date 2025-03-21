@@ -1,0 +1,4 @@
+pywin32>=305
+pywinauto>=0.6.8
+PyQt6>=6.0.0
+pyperclip>=1.8.2
