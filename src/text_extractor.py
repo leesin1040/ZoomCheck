@@ -84,6 +84,12 @@ class TextExtractor:
     def extract_participants(self, window_handle):
         """Zoom 참가자 창에서 참가자 목록을 추출합니다."""
         try:
+            # COM 초기화 (필요할 경우)
+            try:
+                pythoncom.CoInitialize()
+            except:
+                pass
+
             # 시작 시간 기록
             start_time = time.time()
             self.logger.info(f"[시간 측정] 참가자 추출 시작: {datetime.now().strftime('%H:%M:%S.%f')[:-3]}")
@@ -93,7 +99,7 @@ class TextExtractor:
             # 창을 활성화
             if win32gui.IsWindow(window_handle):
                 win32gui.SetForegroundWindow(window_handle)
-                time.sleep(0.3)
+                time.sleep(0.1)  # 활성화 대기 시간
 
             # pywinauto로 창에 연결
             app = Application(backend='uia').connect(handle=window_handle)
@@ -113,105 +119,328 @@ class TextExtractor:
             self.logger.info(f"참가자 창 이름: {window_title}")
             self.logger.info("참가자 목록 검색 중...")
 
-            participants = []
-            seen_participants = set()
-            last_count = 0
-            no_new_count = 0  # 새로운 참가자를 찾지 못한 연속 횟수
-            
             # 처음에 Home 키를 눌러 맨 위로 스크롤
             window.set_focus()
             send_keys('{HOME}')
-            time.sleep(0.2)
+            time.sleep(0.2)  # 홈 키 적용 대기
 
             # 추출 시간 측정 시작
             extraction_start = time.time()
+            
+            participants = []
+            seen_participants = set()
             scroll_count = 0
             total_scroll_time = 0
             
-            # 마지막 요소 텍스트를 저장하여 스크롤 끝을 감지
-            last_element_text = None
-            end_detected = False
-
-            while True:
+            # 스크롤 관련 변수
+            max_scroll_attempts = 60  # 스크롤 제한을 60회로 증가
+            no_new_count = 0
+            consecutive_same_view = 0
+            last_batch = []
+            small_batch_count = 0  # 적은 수의 참가자만 발견된 횟수
+            
+            # 스크롤 딜레이 및 속도 조정
+            scroll_delay = 0.2  # 초기값
+            
+            # 스크롤 오버랩을 위한 설정: true=더 겹치게 스크롤, false=덜 겹치게 스크롤
+            use_smaller_scroll = True
+            
+            while scroll_count < max_scroll_attempts and consecutive_same_view < 3:
                 scroll_count += 1
-                scan_start = time.time()
-                prev_count = len(participants)
+                current_batch = []
+                scroll_start = time.time()
                 
-                # 모든 요소를 한번에 가져와서 확인
+                # 현재 화면에서 참가자 추출
                 try:
                     all_elements = window.descendants()
                     
-                    # 마지막 요소의 텍스트 저장 (스크롤 끝 감지용)
-                    last_visible_element = None
-                    
+                    # 참가자 요소 필터링 최적화
                     for child in all_elements:
                         try:
                             text = child.window_text()
-                            if text and "컴퓨터 오디오" in text and "비디오" in text:
-                                last_visible_element = text  # 현재 보이는 마지막 요소 업데이트
+                            # 좀 더 정확한 참가자 필터링
+                            if text and ("컴퓨터 오디오" in text or "비디오" in text):
                                 name = text.split(',')[0].strip()
-                                if name and not any(x in name.lower() for x in ['검색', '초대', '총 참가자']):
+                                if name and not any(x in name.lower() for x in ['검색', '초대', '총 참가자', '모두에게 메시지 보내기']):
+                                    current_batch.append(name)
                                     if name not in seen_participants:
                                         participants.append(name)
                                         seen_participants.add(name)
                         except Exception:
                             continue
                 
-                    # 마지막 요소를 이용해 스크롤 끝 감지
-                    if last_visible_element == last_element_text:
-                        no_new_count += 1
-                        if no_new_count >= 2:  # 두 번 연속 같은 마지막 요소면 끝으로 간주
-                            self.logger.info("스크롤 끝 감지: 마지막 요소가 변하지 않음")
-                            end_detected = True
-                    else:
-                        no_new_count = 0
-                        last_element_text = last_visible_element
-                
                 except Exception as e:
                     self.logger.error(f"요소 처리 중 오류: {str(e)}")
                 
+                # 발견된 참가자 확인
                 current_count = len(participants)
-                if current_count > prev_count:
-                    self.logger.info(f"[시간 측정] 스크롤 {scroll_count}: {current_count - prev_count}명 발견 (총 {current_count}명)")
+                found_now = len(current_batch)
                 
-                # 모든 참가자를 찾았거나 스크롤 끝에 도달했는지 확인
-                if (total_expected > 0 and current_count >= total_expected) or end_detected:
-                    self.logger.info(f"참가자 목록 추출 완료 조건 충족: 총 {current_count}명 발견")
+                # 현재 배치가 이전과 동일한지 확인
+                current_batch_set = set(current_batch)
+                if current_batch and current_batch_set == set(last_batch):
+                    consecutive_same_view += 1
+                    # 2번 연속 동일하면 스크롤 딜레이 증가
+                    if consecutive_same_view >= 2:
+                        scroll_delay = min(0.25, scroll_delay + 0.05)  # 딜레이 증가
+                    
+                    if consecutive_same_view >= 3:
+                        self.logger.info("스크롤 끝 감지: 마지막 요소가 변하지 않음")
+                else:
+                    consecutive_same_view = 0
+                    
+                # 마지막 배치 업데이트
+                last_batch = current_batch
+                
+                # 새 참가자 발견 여부 로깅
+                prev_count = current_count - found_now
+                
+                if current_count > prev_count and found_now > 0:
+                    self.logger.info(f"[시간 측정] 스크롤 {scroll_count}: {found_now}명 발견 (총 {current_count}명)")
+                    no_new_count = 0
+                    small_batch_count = 0 if found_now > 10 else small_batch_count + 1
+                    
+                    # 발견 속도가 좋으면 스크롤 딜레이 최적화
+                    if found_now >= 20:
+                        scroll_delay = max(0.15, scroll_delay - 0.01)  # 딜레이 약간 감소
+                else:
+                    no_new_count += 1
+                    small_batch_count += 1
+                    # 새 참가자를 찾지 못하면 스크롤 딜레이 증가
+                    if no_new_count >= 2:
+                        scroll_delay = min(0.25, scroll_delay + 0.02)  # 딜레이 증가
+                
+                # 모든 참가자를 찾았는지 확인
+                if total_expected > 0 and current_count >= total_expected:
+                    self.logger.info(f"참가자 목록 추출 완료: 모든 참가자 {total_expected}명 찾음")
                     break
                 
-                # 새 참가자를 찾지 못한 경우
-                if current_count == last_count:
-                    no_new_count += 1
-                    if no_new_count >= 3:  # 세 번 연속 새 참가자 없으면 종료
-                        self.logger.info("새 참가자 없음: 스크롤 종료")
-                        break
+                # 스크롤 종료 조건: 진행률 95% 이상 + 연속 2회 이상 적은 참가자 발견
+                if total_expected > 0 and current_count >= total_expected * 0.95 and small_batch_count >= 2:
+                    self.logger.info(f"참가자의 95% 이상 발견 및 새 참가자 발견률 저하: 스크롤 종료")
+                    break
+                
+                # 더 이상 찾지 못하는 경우 전략 변경
+                if no_new_count >= 3:
+                    if no_new_count == 3:
+                        self.logger.info("연속 3번 새 참가자 없음: 대형 스크롤 시도")
+                    
+                    # 진행률 확인
+                    progress = current_count / total_expected if total_expected > 0 else 0
+                    
+                    # 진행률에 따라 다른 전략 시도
+                    if progress < 0.6 and scroll_count <= 40:
+                        # 절반 조금 더 넘은 수준이라면 대형 스크롤 시도
+                        window.set_focus()
+                        if use_smaller_scroll:
+                            send_keys('{PGDN}')  # 더 작은 스크롤로 변경
+                        else:
+                            send_keys('{PGDN 2}')  # 2페이지 점프
+                        time.sleep(0.25)  # 대형 스크롤 대기
+                        
+                        # 추가 전략: 다시 위로 올라가서 재시도
+                        if no_new_count >= 5 and scroll_count >= 20:
+                            self.logger.info("새로운 전략: 맨 위로 이동 후 천천히 스크롤")
+                            window.set_focus()
+                            send_keys('{HOME}')
+                            time.sleep(0.3)
+                            
+                            # 중간 지점까지 빠르게 스크롤
+                            current_point = 0
+                            target_point = int(current_count * 0.5 / 22)  # 현재 발견한 참가자의 절반 지점
+                            
+                            self.logger.info(f"중간 지점({target_point}회 스크롤)까지 빠르게 이동")
+                            for _ in range(target_point):
+                                window.set_focus()
+                                send_keys('{PGDN}')
+                                current_point += 1
+                                if current_point % 5 == 0:
+                                    time.sleep(0.05)  # 5회마다 짧은 대기
+                                else:
+                                    time.sleep(0.02)  # 매우 짧은 대기
+                            
+                            # 스크롤 딜레이 초기화 및 천천히 진행
+                            time.sleep(0.2)
+                            scroll_delay = 0.2
+                            no_new_count = 0
+                            use_smaller_scroll = True  # 작은 스크롤 사용
+                    else:
+                        # 절반 이상 찾았거나, 충분히 스크롤했다면
+                        window.set_focus()
+                        send_keys('{PGDN}')
+                        time.sleep(0.2)
+                    
+                    # 매우 오랫동안 새 참가자를 찾지 못하면 종료 고려
+                    if no_new_count >= 7:
+                        if progress >= 0.5 or scroll_count >= 50:
+                            self.logger.info(f"참가자 목록 추출 완료 조건 충족: 총 {current_count}명 발견 (진행률: {progress*100:.1f}%)")
+                            break
                 else:
-                    no_new_count = 0  # 새 참가자 발견 시 카운터 리셋
-                
-                last_count = current_count
-
-                # 스크롤 시간 측정
-                scroll_start = time.time()
-                
-                # 페이지 다운으로 스크롤
-                try:
+                    # 일반 스크롤
                     window.set_focus()
-                    send_keys('{PGDN}')
-                    scroll_time = 0.2  # 스크롤 후 대기 시간 단축
-                    time.sleep(scroll_time)
-                    total_scroll_time += scroll_time
-                except Exception as e:
-                    self.logger.error(f"스크롤 중 오류: {str(e)}")
-
+                    
+                    # 10번마다 대형 스크롤하되, 적절한 대기 시간 적용
+                    if scroll_count % 10 == 0:
+                        self.logger.info(f"대형 스크롤 시도 (10회 단위)")
+                        if use_smaller_scroll:
+                            send_keys('{PGDN}')  # 1페이지만 스크롤
+                            time.sleep(0.25)  # 로딩 시간
+                        else:
+                            send_keys('{PGDN 2}')  # 2페이지 점프
+                            time.sleep(0.3)  # 충분한 로딩 시간
+                    else:
+                        # 스크롤 오버랩 설정에 따라 다른 키 사용
+                        if use_smaller_scroll:
+                            # 더 작은 스크롤 사용 (약 75% 오버랩)
+                            send_keys('{DOWN 20}')  # 약간만 스크롤
+                        else:
+                            # 기본 스크롤 (약 50% 오버랩)
+                            send_keys('{PGDN}')
+                        
+                        # 스크롤 딜레이는 현재 설정된 값 사용
+                        time.sleep(scroll_delay)
+                
+                total_scroll_time += scroll_delay
+            
             # 추출 시간 계산
             extraction_time = time.time() - extraction_start
             
-            # 마지막으로 맨 위로 스크롤
-            window.set_focus()
-            send_keys('{HOME}')
-            
+            # 추출 완료 후 추가 검사 (누락이 있으면)
+            if total_expected > 0 and len(participants) < total_expected * 0.95:
+                self.logger.info(f"누락된 참가자가 많음: 추가 검사 실행 중... ({len(participants)}/{total_expected}명)")
+                
+                # 맨 아래로 스크롤한 후 위로 올라오면서 확인
+                window.set_focus()
+                send_keys('{END}')
+                time.sleep(0.3)
+                
+                # 위로 스크롤하며 추가 참가자 확인
+                extra_scrolls = min(20, max(10, (total_expected - len(participants)) // 15))
+                for i in range(extra_scrolls):
+                    window.set_focus()
+                    send_keys('{PGUP}')
+                    time.sleep(0.2)
+                    
+                    try:
+                        extra_elements = window.descendants()
+                        initial_count = len(participants)
+                        
+                        for child in extra_elements:
+                            try:
+                                text = child.window_text()
+                                if text and ("컴퓨터 오디오" in text or "비디오" in text):
+                                    name = text.split(',')[0].strip()
+                                    if name and not any(x in name.lower() for x in ['검색', '초대', '총 참가자', '모두에게 메시지 보내기']):
+                                        if name not in seen_participants:
+                                            participants.append(name)
+                                            seen_participants.add(name)
+                            except Exception:
+                                continue
+                        
+                        # 새로 찾은 참가자 수 로깅
+                        new_found = len(participants) - initial_count
+                        if new_found > 0:
+                            self.logger.info(f"추가 검사 {i+1}: {new_found}명 추가 발견 (총 {len(participants)}명)")
+                    except Exception as e:
+                        self.logger.error(f"추가 검사 중 오류: {str(e)}")
+                
+                # 마지막 10% 검사를 위한 전략: 중간 지점에서 시작
+                if len(participants) < total_expected * 0.95:
+                    self.logger.info("최종 검사: 중간 지점부터 추가 검색")
+                    
+                    # 맨 위로 이동
+                    window.set_focus()
+                    send_keys('{HOME}')
+                    time.sleep(0.3)
+                    
+                    # 중간 지점까지 빠르게 스크롤
+                    mid_point = total_expected // 44  # 약 44명 기준으로 계산
+                    for _ in range(mid_point // 2):
+                        window.set_focus()
+                        send_keys('{PGDN}')
+                        time.sleep(0.05)
+                    
+                    # 중간 부분 검사
+                    for i in range(min(15, mid_point)):
+                        window.set_focus()
+                        send_keys('{PGDN}')
+                        time.sleep(0.2)
+                        
+                        try:
+                            mid_elements = window.descendants()
+                            initial_count = len(participants)
+                            
+                            for child in mid_elements:
+                                try:
+                                    text = child.window_text()
+                                    if text and ("컴퓨터 오디오" in text or "비디오" in text):
+                                        name = text.split(',')[0].strip()
+                                        if name and not any(x in name.lower() for x in ['검색', '초대', '총 참가자']):
+                                            if name not in seen_participants:
+                                                participants.append(name)
+                                                seen_participants.add(name)
+                                except Exception:
+                                    continue
+                            
+                            # 새로 찾은 참가자 수 로깅
+                            new_found = len(participants) - initial_count
+                            if new_found > 0:
+                                self.logger.info(f"중간 검사 {i+1}: {new_found}명 추가 발견 (총 {len(participants)}명)")
+                        except Exception as e:
+                            self.logger.error(f"중간 검사 중 오류: {str(e)}")
+                
+                # 맨 위로 다시 스크롤 (원래 상태로 복원)
+                window.set_focus()
+                send_keys('{HOME}')
+            # 마지막 10명 이하 발견 시에도 추가 검사 실행
+            elif small_batch_count >= 2 and found_now <= 10:
+                self.logger.info(f"마지막 참가자 발견률 저하: 추가 검사 실행")
+                
+                # 맨 아래로 스크롤한 후 위로 올라오면서 확인
+                window.set_focus()
+                send_keys('{END}')
+                time.sleep(0.3)
+                
+                # 위로 스크롤하며 추가 참가자 확인 (5회)
+                for i in range(5):
+                    window.set_focus()
+                    send_keys('{PGUP}')
+                    time.sleep(0.2)
+                    
+                    try:
+                        final_elements = window.descendants()
+                        initial_count = len(participants)
+                        
+                        for child in final_elements:
+                            try:
+                                text = child.window_text()
+                                if text and ("컴퓨터 오디오" in text or "비디오" in text):
+                                    name = text.split(',')[0].strip()
+                                    if name and not any(x in name.lower() for x in ['검색', '초대', '총 참가자']):
+                                        if name not in seen_participants:
+                                            participants.append(name)
+                                            seen_participants.add(name)
+                            except Exception:
+                                continue
+                        
+                        # 새로 찾은 참가자 수 로깅
+                        new_found = len(participants) - initial_count
+                        if new_found > 0:
+                            self.logger.info(f"마지막 검사 {i+1}: {new_found}명 추가 발견 (총 {len(participants)}명)")
+                    except Exception as e:
+                        self.logger.error(f"마지막 검사 중 오류: {str(e)}")
+                
+                # 맨 위로 복원
+                window.set_focus()
+                send_keys('{HOME}')
+                
             # 총 소요 시간 계산
             total_time = time.time() - start_time
+            
+            # 참가자 수 불일치 로깅
+            if total_expected > 0 and total_expected != len(participants):
+                self.logger.info(f"참고: 예상 참가자 수({total_expected}명)와 찾은 참가자 수({len(participants)}명)가 다릅니다.")
+                self.logger.info(f"      {total_expected - len(participants)}명 누락됨 ({(total_expected - len(participants))/total_expected*100:.1f}%)")
             
             self.logger.info(f"[시간 측정] 참가자 추출 완료: 총 {len(participants)}명")
             self.logger.info(f"[시간 측정] 총 소요 시간: {total_time:.3f}초")
@@ -223,9 +452,14 @@ class TextExtractor:
 
         except Exception as e:
             self.logger.error(f"참가자 목록 추출 중 오류 발생: {str(e)}")
-            end_time = time.time()
-            self.logger.info(f"[시간 측정] 오류로 인한 중단: {end_time - start_time:.3f}초")
             return []
+            
+        finally:
+            # COM 해제
+            try:
+                pythoncom.CoUninitialize()
+            except:
+                pass
 
 def connect_to_window(hwnd):
     """창 핸들을 통해 pywinauto Application에 연결
