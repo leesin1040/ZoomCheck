@@ -4,47 +4,41 @@ import win32con
 import win32process
 import logging
 import re
+from pywinauto import Application
+from pywinauto.findwindows import find_windows
+
+# Logger 설정
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class WindowFinder:
-    def __init__(self):
-        self.logger = logging.getLogger(__name__)
-        
-    def find_zoom_window(self):
-        """Zoom 참가자 창을 찾아서 핸들을 반환합니다."""
+    @staticmethod
+    def find_zoom_window():
+        """Zoom 참가자 창을 찾습니다."""
         try:
             def callback(hwnd, windows):
                 if win32gui.IsWindowVisible(hwnd):
-                    window_text = win32gui.GetWindowText(hwnd)
-                    # 디버깅: 모든 창 정보 출력
-                    if window_text:
-                        self.logger.info(f"발견된 창: '{window_text}'")
-                    
-                    # "참가자" 또는 "Participants"로 시작하는 창 찾기
-                    if (window_text.startswith("참가자") or 
-                        window_text.startswith("Participants")):
-                        self.logger.info(f"*** Zoom 참가자 창 발견!: '{window_text}' ***")
+                    title = win32gui.GetWindowText(hwnd)
+                    logger.info(f"발견된 창: '{title}'")
+                    if "참가자" in title and "Zoom" not in title:  # "Zoom 참가자 체크"가 아닌 창을 찾음
                         windows.append(hwnd)
-                return True
 
             windows = []
             win32gui.EnumWindows(callback, windows)
             
             if windows:
-                selected_window = windows[0]
-                window_text = win32gui.GetWindowText(selected_window)
-                self.logger.info(f"선택된 Zoom 참가자 창: '{window_text}' (핸들: {selected_window})")
-                
-                # 창 위치와 크기 정보 출력
-                rect = win32gui.GetWindowRect(selected_window)
-                self.logger.info(f"창 위치: {rect}")
-                
-                return selected_window
+                hwnd = windows[0]
+                title = win32gui.GetWindowText(hwnd)
+                logger.info(f"*** Zoom 참가자 창 발견!: '{title}' ***")
+                rect = win32gui.GetWindowRect(hwnd)
+                logger.info(f"창 위치: {rect}")
+                return hwnd
             else:
-                self.logger.warning("Zoom 참가자 창을 찾을 수 없습니다.")
+                logger.error("Zoom 참가자 창을 찾을 수 없습니다.")
                 return None
-                
+
         except Exception as e:
-            self.logger.error(f"Zoom 창 검색 중 오류 발생: {str(e)}")
+            logger.error(f"Zoom 창 찾기 중 오류 발생: {e}")
             return None
 
     def print_all_windows(self):
@@ -60,18 +54,16 @@ class WindowFinder:
         win32gui.EnumWindows(callback, None)
         self.logger.info("===========================")
 
-def get_process_id_from_window(hwnd):
-    """창 핸들로부터 프로세스 ID를 얻는 함수
-    
-    Args:
-        hwnd (int): 윈도우 핸들
-        
-    Returns:
-        int: 프로세스 ID
-    """
-    _, process_id = win32process.GetWindowThreadProcessId(hwnd)
-    logger.debug(f"핸들 {hwnd}의 프로세스 ID: {process_id}")
-    return process_id
+    @staticmethod
+    def get_process_id_from_window(hwnd):
+        """주어진 핸들에서 프로세스 ID를 가져옵니다."""
+        try:
+            app = Application().connect(handle=hwnd)
+            process_id = app.process
+            return process_id
+        except Exception as e:
+            logger.error(f"프로세스 ID 가져오기 중 오류 발생: {e}")
+            return None
 
 def focus_window(hwnd):
     """창을 최상위로 가져오는 함수

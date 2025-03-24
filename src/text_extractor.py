@@ -8,12 +8,30 @@ import win32ui
 from ctypes import create_unicode_buffer, sizeof
 import re
 import pythoncom
-from pywinauto import Application
+from pywinauto import Application, timings
 from pywinauto.findwindows import ElementNotFoundError
+from pywinauto.keyboard import send_keys
+from src.window_finder import WindowFinder
+import win32api
+import win32clipboard
+
+# Logger 설정
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class TextExtractor:
     def __init__(self):
-        self.logger = logging.getLogger(__name__)
+        self.logger = logger
+        try:
+            pythoncom.CoInitialize()
+        except:
+            pass
+
+    def __del__(self):
+        try:
+            pythoncom.CoUninitialize()
+        except:
+            pass
 
     def get_current_time(self):
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -35,50 +53,91 @@ class TextExtractor:
         except:
             return raw_text
 
+    def get_clipboard_text(self):
+        """클립보드의 텍스트를 가져옵니다."""
+        try:
+            win32clipboard.OpenClipboard()
+            data = win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT)
+            win32clipboard.CloseClipboard()
+            return data
+        except Exception as e:
+            self.logger.error(f"클립보드 읽기 오류: {str(e)}")
+            return ""
+
     def extract_participants(self, window_handle):
         """Zoom 참가자 창에서 참가자 목록을 추출합니다."""
         try:
-            pythoncom.CoInitialize()
             self.logger.info(f"창 핸들 {window_handle}에 연결 시도")
             
+            # 창을 활성화하고 포커스를 줍니다
+            if win32gui.IsWindow(window_handle):
+                win32gui.SetForegroundWindow(window_handle)
+                time.sleep(0.5)
+
+            # pywinauto로 창에 연결
             app = Application(backend='uia').connect(handle=window_handle)
             window = app.window(handle=window_handle)
             
+            self.logger.info(f"참가자 창 이름: {window.window_text()}")
             self.logger.info("참가자 목록 검색 중...")
+
+            participants = []  # 순서 유지를 위해 list 사용
+            seen_participants = set()  # 중복 체크용
+            last_count = 0
+            scroll_attempts = 0
+            max_scroll_attempts = 10
+
+            # 먼저 맨 위로 스크롤
+            for _ in range(max_scroll_attempts):
+                send_keys('{PGUP}')
+                time.sleep(0.1)
+
+            while scroll_attempts < max_scroll_attempts:
+                # 현재 보이는 참가자들을 가져옵니다
+                for child in window.descendants():
+                    try:
+                        text = child.window_text()
+                        if text and "컴퓨터 오디오" in text and "비디오" in text:
+                            name = text.split(',')[0].strip()
+                            if name and not any(x in name.lower() for x in ['검색', '초대', '총 참가자']):
+                                if name not in seen_participants:  # 중복 체크
+                                    participants.append(name)  # 순서대로 추가
+                                    seen_participants.add(name)  # 중복 체크용 set에 추가
+                                    self.logger.info(f"참가자 발견: {name}")
+                    except Exception as e:
+                        continue
+
+                current_count = len(participants)
+                
+                # 새로운 참가자가 발견되지 않으면 스크롤을 시도합니다
+                if current_count == last_count:
+                    scroll_attempts += 1
+                else:
+                    scroll_attempts = 0  # 새 참가자가 발견되면 카운터 리셋
+                
+                last_count = current_count
+
+                # Page Down 키를 눌러 스크롤합니다
+                try:
+                    window.set_focus()
+                    send_keys('{PGDN}')
+                    time.sleep(0.5)  # 스크롤 후 잠시 대기
+                except Exception as e:
+                    self.logger.error(f"스크롤 중 오류: {str(e)}")
+
+            # 마지막으로 맨 위로 스크롤
+            for _ in range(max_scroll_attempts):
+                send_keys('{PGUP}')
+                time.sleep(0.1)
             
-            try:
-                list_view = window.child_window(control_type="List")
-                if list_view.exists():
-                    self.logger.info("참가자 리스트 찾음")
-                    
-                    # 순서를 유지하면서 참가자 목록 추출
-                    participants = []
-                    list_items = list_view.children()
-                    
-                    for item in list_items:
-                        try:
-                            name = item.window_text()
-                            if name and not name.startswith("참가자"):
-                                participants.append(name)
-                                self.logger.info(f"참가자 발견: {name}")
-                        except Exception as e:
-                            self.logger.error(f"항목 처리 중 오류: {str(e)}")
-                            continue
-                    
-                    self.logger.info(f"총 {len(participants)}명의 참가자를 찾았습니다")
-                    return participants
-                    
-            except ElementNotFoundError:
-                self.logger.error("참가자 리스트를 찾을 수 없습니다")
+            self.logger.info(f"총 {len(participants)}명의 참가자를 찾았습니다")
+            self.logger.info(f"참가자 목록: {participants}")
             
-            return []
+            return participants
 
         except Exception as e:
             self.logger.error(f"참가자 목록 추출 중 오류 발생: {str(e)}")
             return []
-            
-        finally:
-            pythoncom.CoUninitialize()
 
 def connect_to_window(hwnd):
     """창 핸들을 통해 pywinauto Application에 연결
