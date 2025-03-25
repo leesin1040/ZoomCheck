@@ -132,8 +132,11 @@ class TextExtractor:
             # 추출 시간 측정 시작
             extraction_start = time.time()
             
-            participants = []
-            seen_participants = set()
+            # 전체 텍스트 비교를 위한 변수들
+            participants = []  # 이름만 저장
+            full_text_dict = {}  # 이름: [전체 텍스트 목록]
+            seen_participants = set()  # 이름 중복 체크용
+            
             scroll_count = 0
             total_scroll_time = 0
             
@@ -315,6 +318,72 @@ class TextExtractor:
                 window.set_focus()
                 send_keys('{HOME}')
             
+            # 중복 이름 분석
+            duplicate_info = {}  # 중복 이름 정보
+            self.logger.info("중복 이름 분석 시작")
+            
+            # 각 이름별로 수집된 텍스트 확인
+            for name, texts in full_text_dict.items():
+                if len(texts) > 1:
+                    self.logger.info(f"이름 '{name}'이(가) {len(texts)}번 발견됨")
+                    
+                    # 텍스트들이 정확히 동일한지 비교
+                    unique_texts = set(texts)
+                    if len(unique_texts) == 1:
+                        # 완전히 동일한 텍스트가 여러 개 => 확실한 중복
+                        duplicate_info[name] = {
+                            'count': len(texts),
+                            'type': '정확한 중복',
+                            'details': texts[0]  # 동일한 상태 정보
+                        }
+                        self.logger.info(f"  -> 정확한 중복으로 판단 (동일한 상태)")
+                    else:
+                        # 동일 이름이지만 상태가 다름 => 동명이인 가능성
+                        status_info = []
+                        for text in texts:
+                            # 상태 정보 추출 (컴마 이후 부분)
+                            status = text.split(',', 1)[1].strip() if ',' in text else "상태 정보 없음"
+                            status_info.append(status)
+                        
+                        duplicate_info[name] = {
+                            'count': len(texts),
+                            'type': '동명이인 가능성',
+                            'details': status_info
+                        }
+                        self.logger.info(f"  -> 동명이인 가능성으로 판단 (서로 다른 상태)")
+                        self.logger.info(f"  -> 상태 목록: {status_info}")
+            
+            # 중복 정보 로깅
+            if duplicate_info:
+                self.logger.info(f"=== 중복 이름 분석 결과 ===")
+                self.logger.info(f"총 {len(duplicate_info)}개의 중복/동명이인 이름 발견")
+                for name, info in duplicate_info.items():
+                    self.logger.info(f"이름 '{name}'이(가) {info['count']}번 발견됨 ({info['type']})")
+            else:
+                self.logger.info("중복 이름이 발견되지 않았습니다.")
+            
+            # 참가자 목록에 중복 정보 표시 추가
+            participants_with_info = []
+            self.logger.info("참가자 목록에 중복 정보 추가 중")
+            
+            for name in participants:
+                # 기본 이름 (이름만 있거나 이미 수정된 경우)
+                base_name = name.split(' [')[0] if ' [' in name else name
+                
+                if base_name in duplicate_info:
+                    info = duplicate_info[base_name]
+                    if info['type'] == '정확한 중복':
+                        new_name = f"{base_name} [중복: {info['count']}명, 동일 상태]"
+                    else:
+                        new_name = f"{base_name} [동명이인 가능성: {info['count']}명]"
+                    
+                    participants_with_info.append(new_name)
+                    self.logger.info(f"중복 정보 추가: '{base_name}' -> '{new_name}'")
+                else:
+                    participants_with_info.append(name)
+            
+            self.logger.info(f"참가자 목록에 중복 정보 추가 완료: {len(participants_with_info)}명")
+            
             # 총 소요 시간 계산
             total_time = time.time() - start_time
             
@@ -329,11 +398,14 @@ class TextExtractor:
             self.logger.info(f"[시간 측정] 추출 시간: {extraction_time:.3f}초 ({(extraction_time/total_time*100):.1f}%)")
             self.logger.info(f"[시간 측정] 평균 참가자 추출 속도: {len(participants)/extraction_time:.1f}명/초")
             
-            return participants
+            # 중복 정보를 포함한 참가자 목록 반환
+            return participants_with_info, duplicate_info
 
         except Exception as e:
             self.logger.error(f"참가자 목록 추출 중 오류 발생: {str(e)}")
-            return []
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return [], {}
             
         finally:
             # COM 해제
