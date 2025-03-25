@@ -8,7 +8,7 @@ from datetime import datetime
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QPushButton, QTextEdit, QHBoxLayout, QLabel,
-    QSplitter, QTabWidget
+    QSplitter
 )
 from PyQt6.QtCore import QObject, pyqtSignal, Qt
 from PyQt6.QtGui import QFont
@@ -31,7 +31,8 @@ class QTextEditLogger(logging.Handler):
         msg = self.format(record)
         self.widget.append(msg)
         # 자동 스크롤
-        self.widget.verticalScrollBar().setValue(self.widget.verticalScrollBar().maximum())
+        scrollbar = self.widget.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
 
 class SignalManager(QObject):
     """UI 업데이트를 위한 시그널 관리 클래스"""
@@ -44,14 +45,12 @@ class ZoomCheckGUI(QMainWindow):
         super().__init__()
         
         # 기본 변수 초기화
-        self.window_finder = WindowFinder()
-        self.text_extractor = TextExtractor()
-        self.signal_manager = SignalManager()
         self.extraction_in_progress = False
-        
-        # 결과 저장용 변수
         self.current_participants = []
         self.current_duplicate_info = {}
+        
+        # 시그널 매니저 초기화
+        self.signal_manager = SignalManager()
         
         # UI 설정
         self.init_ui()
@@ -67,20 +66,34 @@ class ZoomCheckGUI(QMainWindow):
     def setup_logging(self):
         """로깅 핸들러 설정"""
         # 기존 핸들러 제거
+        logger = logging.getLogger()
         for handler in logger.handlers[:]:
             logger.removeHandler(handler)
         
         # GUI 로깅 핸들러 추가
-        log_handler = QTextEditLogger(self.log_tab)
+        log_handler = QTextEditLogger(self.log_area)
+        log_handler.setLevel(logging.INFO)
         logger.addHandler(log_handler)
         
-        # 로그 레벨 설정
+        # 콘솔 핸들러도 유지
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        logger.addHandler(console_handler)
+        
+        # 루트 로거 레벨 설정
         logger.setLevel(logging.INFO)
+        
+        # pywinauto 로깅도 캡처
+        pywinauto_logger = logging.getLogger('pywinauto')
+        pywinauto_logger.setLevel(logging.INFO)
+        
+        # 로그 출력 테스트
+        logger.info("로깅 시스템 초기화 완료")
     
     def init_ui(self):
         """UI 요소 초기화"""
         self.setWindowTitle('Zoom 참가자 체크')
-        self.setGeometry(100, 100, 1000, 700)
+        self.setGeometry(100, 100, 1200, 800)
         
         # 중앙 위젯 및 레이아웃
         central_widget = QWidget()
@@ -109,22 +122,41 @@ class ZoomCheckGUI(QMainWindow):
         
         main_layout.addLayout(button_layout)
         
-        # 탭 위젯 생성
-        self.tab_widget = QTabWidget()
-        main_layout.addWidget(self.tab_widget)
+        # 분할기 생성 (수평 분할)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setSizes([600, 600])  # 초기 크기 설정
+        main_layout.addWidget(splitter)
         
-        # 참가자 목록 탭
-        self.participant_tab = QTextEdit()
-        self.participant_tab.setReadOnly(True)
+        # 왼쪽: 참가자 목록 영역
+        participant_widget = QWidget()
+        participant_layout = QVBoxLayout()
+        participant_widget.setLayout(participant_layout)
+        
+        participant_label = QLabel("참가자 목록")
+        participant_layout.addWidget(participant_label)
+        
+        self.participant_area = QTextEdit()
+        self.participant_area.setReadOnly(True)
         font = QFont("Consolas", 10)
-        self.participant_tab.setFont(font)
-        self.tab_widget.addTab(self.participant_tab, "참가자 목록")
+        self.participant_area.setFont(font)
+        participant_layout.addWidget(self.participant_area)
         
-        # 로그 탭
-        self.log_tab = QTextEdit()
-        self.log_tab.setReadOnly(True)
-        self.log_tab.setFont(font)
-        self.tab_widget.addTab(self.log_tab, "로그")
+        # 오른쪽: 로그 영역
+        log_widget = QWidget()
+        log_layout = QVBoxLayout()
+        log_widget.setLayout(log_layout)
+        
+        log_label = QLabel("로그")
+        log_layout.addWidget(log_label)
+        
+        self.log_area = QTextEdit()
+        self.log_area.setReadOnly(True)
+        self.log_area.setFont(font)
+        log_layout.addWidget(self.log_area)
+        
+        # 분할기에 위젯 추가
+        splitter.addWidget(participant_widget)
+        splitter.addWidget(log_widget)
         
         # 초기 안내 메시지
         instructions = (
@@ -132,10 +164,10 @@ class ZoomCheckGUI(QMainWindow):
             "1. Zoom 미팅에 참가 후 '참가자' 버튼을 클릭하여 참가자 목록 창을 여세요.\n"
             "2. '참가자 목록 가져오기' 버튼을 클릭하여 현재 참가자 목록을 불러옵니다.\n"
             "3. '참가자 목록 복사' 버튼을 클릭하여 클립보드에 참가자 목록을 복사할 수 있습니다.\n"
-            "4. '로그' 탭에서 자세한 실행 정보를 확인할 수 있습니다.\n"
+            "4. 오른쪽 '로그' 영역에서 자세한 실행 정보를 확인할 수 있습니다.\n"
         )
-        self.participant_tab.append(instructions)
-        
+        self.participant_area.append(instructions)
+    
     def refresh_participants(self):
         """참가자 목록 새로고침"""
         if not self.extraction_in_progress:
@@ -143,9 +175,6 @@ class ZoomCheckGUI(QMainWindow):
             self.refresh_button.setEnabled(False)
             self.copy_button.setEnabled(False)
             self.stop_button.setEnabled(True)
-            
-            # 참가자 탭으로 전환
-            self.tab_widget.setCurrentIndex(0)
             
             # 백그라운드 스레드에서 실행
             extraction_thread = threading.Thread(target=self._extract_participants)
@@ -155,19 +184,26 @@ class ZoomCheckGUI(QMainWindow):
     def stop_extraction(self):
         """참가자 추출 중단"""
         if self.extraction_in_progress:
-            self.text_extractor.stop_extraction()
+            # TextExtractor에 stop_extraction 메서드가 있다면 호출
+            try:
+                self.text_extractor.stop_extraction()
+            except:
+                pass
             self.signal_manager.update_log.emit("참가자 목록 추출 중단 요청됨...")
             self.stop_button.setEnabled(False)
     
     def _extract_participants(self):
         """별도 스레드에서 참가자 추출 실행"""
         try:
+            # 로그 및 텍스트 추출기 초기화
+            logging.info("참가자 추출 시작")
+            self.text_extractor = TextExtractor()  # 여기서 초기화
+            
             self.signal_manager.update_log.emit("Zoom 참가자 창 검색 중...")
             self.signal_manager.update_participant_list.emit("Zoom 참가자 창 검색 중...")
             
-            # 올바른 메서드 호출 방식으로 수정
-            # window_handle = self.window_finder.find_zoom_window() -> 잘못된 방식
-            window_handle = WindowFinder.find_zoom_window()  # 올바른 방식 (정적 메서드이므로 클래스에서 직접 호출)
+            # 정적 메서드 호출
+            window_handle = WindowFinder.find_zoom_window()
             
             if window_handle:
                 self.signal_manager.update_log.emit(f"참가자 창 발견! 목록 추출 중...")
@@ -207,6 +243,8 @@ class ZoomCheckGUI(QMainWindow):
                 except Exception as e:
                     self.signal_manager.update_log.emit(f"값 추출 중 오류: {str(e)}")
                     self.signal_manager.update_participant_list.emit(f"값 추출 중 오류: {str(e)}")
+                    import traceback
+                    self.signal_manager.update_log.emit(traceback.format_exc())
                     participants = []
                     duplicate_info = {}
                     
@@ -236,10 +274,9 @@ class ZoomCheckGUI(QMainWindow):
                         possible_dup_count = len(possible_duplicates)
                         header += f", 동명이인 가능성 {possible_dup_count}개"
                     
-                    # 참가자 탭에만 결과 표시
+                    # 참가자 목록 표시
                     self.signal_manager.update_participant_list.emit(header + ":")
                     
-                    # 참가자 목록 표시
                     for participant in participants:
                         self.signal_manager.update_participant_list.emit(participant)
                     
@@ -249,7 +286,7 @@ class ZoomCheckGUI(QMainWindow):
             else:
                 self.signal_manager.update_log.emit("Zoom 참가자 창을 찾을 수 없습니다. Zoom 미팅이 실행 중이고 참가자 목록이 열려있는지 확인해주세요.")
                 self.signal_manager.update_participant_list.emit("Zoom 참가자 창을 찾을 수 없습니다. Zoom 미팅이 실행 중이고 참가자 목록이 열려있는지 확인해주세요.")
-                
+        
         except Exception as e:
             self.signal_manager.update_log.emit(f"오류 발생: {str(e)}")
             self.signal_manager.update_participant_list.emit(f"오류 발생: {str(e)}")
@@ -324,16 +361,16 @@ class ZoomCheckGUI(QMainWindow):
     
     def append_to_log(self, message):
         """로그 영역에 메시지 추가"""
-        self.log_tab.append(message)
-        # 자동 스크롤 (PyQt6 호환)
-        scrollbar = self.log_tab.verticalScrollBar()
+        self.log_area.append(message)
+        # 자동 스크롤
+        scrollbar = self.log_area.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
     
     def append_to_participant_list(self, message):
         """참가자 목록 영역에 메시지 추가"""
-        self.participant_tab.append(message)
-        # 자동 스크롤 (PyQt6 호환)
-        scrollbar = self.participant_tab.verticalScrollBar()
+        self.participant_area.append(message)
+        # 자동 스크롤
+        scrollbar = self.participant_area.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
     
     def set_buttons_enabled(self, enabled):
@@ -346,7 +383,7 @@ def main():
     app = QApplication(sys.argv)
     gui = ZoomCheckGUI()
     gui.show()
-    sys.exit(app.exec())
+    sys.exit(app.exec())  # PyQt6에서는 exec_() 대신 exec() 사용
 
 if __name__ == "__main__":
     main() 
