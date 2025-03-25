@@ -123,3 +123,39 @@ def get_window_text(hwnd):
     except Exception as e:
         logger.error(f"창 제목 가져오기 중 오류 발생: {e}")
         return ""
+
+def copy_to_clipboard(self):
+    """최신 참가자 목록을 클립보드에 복사합니다."""
+    try:
+        # 디버깅 정보 출력
+        self.signal_manager.update_log.emit(f"클립보드 복사 시도: current_participants 길이 = {len(self.current_participants)}")
+        
+        if self.current_participants:
+            # ... 기존 코드 ...
+            
+            # 클립보드에 복사 시도
+            try:
+                clipboard = QApplication.clipboard()
+                self.signal_manager.update_log.emit("QApplication.clipboard() 호출 성공")
+                clipboard.setText(clipboard_text)
+                self.signal_manager.update_log.emit("clipboard.setText() 호출 성공")
+                
+                # 복사 확인
+                copied_text = clipboard.text()
+                if copied_text:
+                    self.signal_manager.update_log.emit(f"클립보드 텍스트 확인 - 길이: {len(copied_text)} 문자")
+                else:
+                    self.signal_manager.update_log.emit("클립보드에 텍스트가 없습니다!")
+                
+                self.signal_manager.update_participant_list.emit("\n클립보드에 참가자 목록이 복사되었습니다.")
+            except Exception as e:
+                self.signal_manager.update_log.emit(f"클립보드 객체 사용 중 오류: {str(e)}")
+                
+        else:
+            self.signal_manager.update_log.emit("복사할 참가자 목록이 없습니다.")
+            self.signal_manager.update_participant_list.emit("\n복사할 참가자 목록이 없습니다. 먼저 목록을 가져오세요.")
+    except Exception as e:
+        self.signal_manager.update_log.emit(f"\n클립보드 복사 중 오류 발생: {str(e)}")
+        self.signal_manager.update_participant_list.emit(f"\n클립보드 복사 중 오류 발생: {str(e)}")
+        import traceback
+        self.signal_manager.update_log.emit(traceback.format_exc())

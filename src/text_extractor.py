@@ -29,6 +29,7 @@ class TextExtractor:
         self.participants_list = []
         self.extraction_active = False
         self.stop_scrolling = False
+        self._should_stop = False  # 중지 플래그 추가
         try:
             pythoncom.CoInitialize()
         except:
@@ -42,6 +43,11 @@ class TextExtractor:
 
     def get_current_time(self):
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    def stop_extraction(self):
+        """참가자 추출을 중단합니다."""
+        self.logger.info("참가자 추출 중단 요청 받음")
+        self._should_stop = True  # 중지 플래그 설정
 
     def clean_participant_name(self, raw_text):
         """참가자 이름만 깔끔하게 추출"""
@@ -94,6 +100,9 @@ class TextExtractor:
                 pythoncom.CoInitialize()
             except:
                 pass
+
+            # 중지 플래그 초기화
+            self._should_stop = False
 
             # 시작 시간 기록
             start_time = time.time()
@@ -149,7 +158,13 @@ class TextExtractor:
             # 스크롤 딜레이 조정 - 속도 개선
             scroll_delay = 0.18  # 초기값 (이전보다 약간 빠르게)
             
+            # 스크롤 루프에서 중지 플래그 확인
             while scroll_count < max_scroll_attempts and consecutive_same_view < 3:
+                # 중지 요청 확인
+                if self._should_stop:
+                    self.logger.info("중지 요청으로 추출 중단")
+                    break
+                
                 scroll_count += 1
                 current_batch = []
                 scroll_start = time.time()
@@ -276,7 +291,7 @@ class TextExtractor:
             extraction_time = time.time() - extraction_start
             
             # 추출 완료 후 추가 검사 (누락이 있으면)
-            if total_expected > 0 and len(participants) < total_expected * 0.95:
+            if total_expected > 0 and len(participants) < total_expected * 0.95 and not self._should_stop:
                 self.logger.info(f"누락된 참가자가 많음: 추가 검사 실행 중... ({len(participants)}/{total_expected}명)")
                 
                 # 맨 아래로 스크롤한 후 위로 올라오면서 확인
@@ -287,6 +302,11 @@ class TextExtractor:
                 # 위로 스크롤하며 추가 참가자 확인
                 extra_scrolls = min(20, max(10, (total_expected - len(participants)) // 15))
                 for i in range(extra_scrolls):
+                    # 중지 요청 확인
+                    if self._should_stop:
+                        self.logger.info("중지 요청으로 추가 검사 중단")
+                        break
+                    
                     window.set_focus()
                     send_keys('{PGUP}')
                     time.sleep(0.2)
@@ -392,11 +412,15 @@ class TextExtractor:
                 self.logger.info(f"참고: 예상 참가자 수({total_expected}명)와 찾은 참가자 수({len(participants)}명)가 다릅니다.")
                 self.logger.info(f"      {total_expected - len(participants)}명 누락됨 ({(total_expected - len(participants))/total_expected*100:.1f}%)")
             
-            self.logger.info(f"[시간 측정] 참가자 추출 완료: 총 {len(participants)}명")
-            self.logger.info(f"[시간 측정] 총 소요 시간: {total_time:.3f}초")
-            self.logger.info(f"[시간 측정] 스크롤 대기 시간: {total_scroll_time:.3f}초 ({(total_scroll_time/total_time*100):.1f}%)")
-            self.logger.info(f"[시간 측정] 추출 시간: {extraction_time:.3f}초 ({(extraction_time/total_time*100):.1f}%)")
-            self.logger.info(f"[시간 측정] 평균 참가자 추출 속도: {len(participants)/extraction_time:.1f}명/초")
+            # 중지 요청에 따른 결과 표시
+            if self._should_stop:
+                self.logger.info("사용자 요청으로 추출이 중단되었습니다.")
+            else:
+                self.logger.info(f"[시간 측정] 참가자 추출 완료: 총 {len(participants)}명")
+                self.logger.info(f"[시간 측정] 총 소요 시간: {total_time:.3f}초")
+                self.logger.info(f"[시간 측정] 스크롤 대기 시간: {total_scroll_time:.3f}초 ({(total_scroll_time/total_time*100):.1f}%)")
+                self.logger.info(f"[시간 측정] 추출 시간: {extraction_time:.3f}초 ({(extraction_time/total_time*100):.1f}%)")
+                self.logger.info(f"[시간 측정] 평균 참가자 추출 속도: {len(participants)/extraction_time:.1f}명/초")
             
             # 중복 정보를 포함한 참가자 목록 반환
             return participants_with_info, duplicate_info

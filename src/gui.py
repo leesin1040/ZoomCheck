@@ -184,12 +184,17 @@ class ZoomCheckGUI(QMainWindow):
     def stop_extraction(self):
         """참가자 추출 중단"""
         if self.extraction_in_progress:
-            # TextExtractor에 stop_extraction 메서드가 있다면 호출
             try:
-                self.text_extractor.stop_extraction()
-            except:
-                pass
-            self.signal_manager.update_log.emit("참가자 목록 추출 중단 요청됨...")
+                # TextExtractor의 stop_extraction 메서드 호출
+                if hasattr(self, 'text_extractor') and hasattr(self.text_extractor, 'stop_extraction'):
+                    self.text_extractor.stop_extraction()
+                    self.signal_manager.update_log.emit("참가자 목록 추출 중단 요청됨...")
+                    self.signal_manager.update_participant_list.emit("참가자 목록 추출 중단 요청됨...")
+                else:
+                    self.signal_manager.update_log.emit("Warning: TextExtractor에 stop_extraction 메서드가 없습니다.")
+            except Exception as e:
+                self.signal_manager.update_log.emit(f"중지 요청 중 오류: {str(e)}")
+            
             self.stop_button.setEnabled(False)
     
     def _extract_participants(self):
@@ -297,6 +302,11 @@ class ZoomCheckGUI(QMainWindow):
             # 완료 후 상태 초기화
             self.extraction_in_progress = False
             self.signal_manager.enable_buttons.emit(True)
+            
+            # 중지 요청이 들어왔다면 메시지 표시
+            if hasattr(self, 'text_extractor') and hasattr(self.text_extractor, '_should_stop') and self.text_extractor._should_stop:
+                self.signal_manager.update_log.emit("사용자 요청으로 참가자 추출이 중단되었습니다.")
+                self.signal_manager.update_participant_list.emit("\n사용자 요청으로 참가자 추출이 중단되었습니다.")
     
     def copy_to_clipboard(self):
         """최신 참가자 목록을 클립보드에 복사합니다."""
@@ -347,10 +357,27 @@ class ZoomCheckGUI(QMainWindow):
                                 for i, status in enumerate(info['details']):
                                     clipboard_text += f"  → 상태 {i+1}: {status}\n"
                 
-                # 클립보드에 복사
-                clipboard = QApplication.clipboard()
-                clipboard.setText(clipboard_text)
-                self.signal_manager.update_participant_list.emit("\n클립보드에 참가자 목록이 복사되었습니다.")
+                # 윈도우 API를 사용한 클립보드 접근
+                try:
+                    import win32clipboard
+                    import win32con
+                    
+                    win32clipboard.OpenClipboard()
+                    win32clipboard.EmptyClipboard()
+                    win32clipboard.SetClipboardText(clipboard_text, win32con.CF_UNICODETEXT)
+                    win32clipboard.CloseClipboard()
+                    
+                    self.signal_manager.update_participant_list.emit("\n클립보드에 참가자 목록이 복사되었습니다.")
+                except Exception as clipboard_error:
+                    self.signal_manager.update_log.emit(f"윈도우 클립보드 API 오류: {str(clipboard_error)}")
+                    
+                    # 실패 시 PyQt 방식으로 다시 시도
+                    try:
+                        clipboard = QApplication.clipboard()
+                        clipboard.setText(clipboard_text)
+                        self.signal_manager.update_participant_list.emit("\n클립보드에 참가자 목록이 복사되었습니다.")
+                    except Exception as qt_error:
+                        self.signal_manager.update_log.emit(f"Qt 클립보드 API 오류: {str(qt_error)}")
             else:
                 self.signal_manager.update_participant_list.emit("\n복사할 참가자 목록이 없습니다. 먼저 목록을 가져오세요.")
         except Exception as e:
