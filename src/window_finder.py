@@ -19,7 +19,6 @@ class WindowFinder:
             def callback(hwnd, windows):
                 if win32gui.IsWindowVisible(hwnd):
                     title = win32gui.GetWindowText(hwnd)
-                    logger.info(f"발견된 창: '{title}'")
                     if "참가자" in title and "Zoom" not in title:  # "Zoom 참가자 체크"가 아닌 창을 찾음
                         windows.append(hwnd)
 
