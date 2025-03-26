@@ -6,6 +6,8 @@ import logging
 import re
 from pywinauto import Application
 from pywinauto.findwindows import find_windows
+import time
+import win32api
 
 # Logger 설정
 logging.basicConfig(level=logging.INFO)
@@ -159,3 +161,39 @@ def copy_to_clipboard(self):
         self.signal_manager.update_participant_list.emit(f"\n클립보드 복사 중 오류 발생: {str(e)}")
         import traceback
         self.signal_manager.update_log.emit(traceback.format_exc())
+
+def scroll_to_top(self, hwnd=None):
+    """스크롤을 제일 위로 올립니다."""
+    if hwnd is None:
+        hwnd = self.current_hwnd
+    
+    if hwnd:
+        win32gui.SetForegroundWindow(hwnd)
+        time.sleep(0.1)
+        win32api.keybd_event(win32con.VK_HOME, 0, 0, 0)
+        time.sleep(0.05)
+        win32api.keybd_event(win32con.VK_HOME, 0, win32con.KEYEVENTF_KEYUP, 0)
+        time.sleep(0.1)
+
+def scroll_down_and_return_to_top(self, hwnd=None, scroll_amount=10):
+    """스크롤을 아래로 내린 후 다시 맨 위로 올립니다."""
+    if hwnd is None:
+        hwnd = self.current_hwnd
+    
+    if hwnd:
+        # 먼저 스크롤을 맨 위로 올림
+        self.scroll_to_top(hwnd)
+        time.sleep(0.5)
+        
+        # 스크롤 다운
+        win32gui.SetForegroundWindow(hwnd)
+        time.sleep(0.1)
+        
+        for _ in range(scroll_amount):
+            win32api.keybd_event(win32con.VK_PGDN, 0, 0, 0)
+            time.sleep(0.05)
+            win32api.keybd_event(win32con.VK_PGDN, 0, win32con.KEYEVENTF_KEYUP, 0)
+            time.sleep(0.1)
+        
+        # 다시 맨 위로 스크롤 올림
+        self.scroll_to_top(hwnd)

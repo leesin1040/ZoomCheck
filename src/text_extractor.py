@@ -438,6 +438,48 @@ class TextExtractor:
             except:
                 pass
 
+    def extract_text_with_ocr(self, hwnd=None, capture_method='window'):
+        """
+        OCR을 사용하여 텍스트를 추출합니다.
+        """
+        if hwnd is None:
+            hwnd = self.window_finder.current_hwnd
+        
+        if not hwnd:
+            raise ValueError("윈도우 핸들이 없습니다.")
+        
+        # 처음에 스크롤을 맨 위로 올립니다
+        self.window_finder.scroll_to_top(hwnd)
+        time.sleep(0.5)
+        
+        # ... existing code ... (기존 OCR 처리 코드)
+        
+        # 텍스트 추출 작업이 끝난 후 다시 스크롤을 맨 위로 올립니다
+        self.window_finder.scroll_to_top(hwnd)
+        
+        return extracted_text
+
+    def extract_text_with_accessibility(self, hwnd=None):
+        """
+        접근성 API를 사용하여 텍스트를 추출합니다.
+        """
+        if hwnd is None:
+            hwnd = self.window_finder.current_hwnd
+        
+        if not hwnd:
+            raise ValueError("윈도우 핸들이 없습니다.")
+        
+        # 처음에 스크롤을 맨 위로 올립니다
+        self.window_finder.scroll_to_top(hwnd)
+        time.sleep(0.5)
+        
+        # ... existing code ... (기존 텍스트 추출 코드)
+        
+        # 텍스트 추출 작업이 끝난 후 다시 스크롤을 맨 위로 올립니다
+        self.window_finder.scroll_to_top(hwnd)
+        
+        return text
+
 def connect_to_window(hwnd):
     """창 핸들을 통해 pywinauto Application에 연결
     
