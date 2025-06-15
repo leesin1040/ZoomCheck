@@ -35,7 +35,7 @@ Zoom 미팅 참석자 확인 및 관리를 위한 GUI 프로그램입니다.
 2. 참가자 목록 창을 엽니다 ("참가자" 버튼 클릭)
 3. 프로그램 실행:
    ```powershell
-   python src\gui.py
+   python -m  src\gui.py
    ```
 
 ### 버튼 기능
