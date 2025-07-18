@@ -9,3 +9,27 @@ tests/test_results/
 
 # 테스트 코드
 tests/test_window_finder.py
+
+# 불필요한 폴더들
+dist/
+build/
+src/__pycache__/
+output/
+
+# Python 캐시 파일
+*.pyc
+__pycache__/
+tests/__pycache__/
+
+# IDE 설정 파일
+.vscode/
+.idea/
+
+# Python 캐시 파일
+*.pyc
+__pycache__/
+tests/__pycache__/
+
+# IDE 설정 파일
+.vscode/
+.idea/

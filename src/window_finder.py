@@ -48,12 +48,12 @@ class WindowFinder:
             if win32gui.IsWindowVisible(hwnd):
                 window_text = win32gui.GetWindowText(hwnd)
                 if window_text:
-                    self.logger.info(f"창: '{window_text}' (핸들: {hwnd})")
+                    logger.info(f"창: '{window_text}' (핸들: {hwnd})")
             return True
         
-        self.logger.info("=== 현재 열린 모든 창 목록 ===")
+        logger.info("=== 현재 열린 모든 창 목록 ===")
         win32gui.EnumWindows(callback, None)
-        self.logger.info("===========================")
+        logger.info("===========================")
 
     @staticmethod
     def get_process_id_from_window(hwnd):
@@ -126,41 +126,7 @@ def get_window_text(hwnd):
         logger.error(f"창 제목 가져오기 중 오류 발생: {e}")
         return ""
 
-def copy_to_clipboard(self):
-    """최신 참가자 목록을 클립보드에 복사합니다."""
-    try:
-        # 디버깅 정보 출력
-        self.signal_manager.update_log.emit(f"클립보드 복사 시도: current_participants 길이 = {len(self.current_participants)}")
-        
-        if self.current_participants:
-            # ... 기존 코드 ...
-            
-            # 클립보드에 복사 시도
-            try:
-                clipboard = QApplication.clipboard()
-                self.signal_manager.update_log.emit("QApplication.clipboard() 호출 성공")
-                clipboard.setText(clipboard_text)
-                self.signal_manager.update_log.emit("clipboard.setText() 호출 성공")
-                
-                # 복사 확인
-                copied_text = clipboard.text()
-                if copied_text:
-                    self.signal_manager.update_log.emit(f"클립보드 텍스트 확인 - 길이: {len(copied_text)} 문자")
-                else:
-                    self.signal_manager.update_log.emit("클립보드에 텍스트가 없습니다!")
-                
-                self.signal_manager.update_participant_list.emit("\n클립보드에 참가자 목록이 복사되었습니다.")
-            except Exception as e:
-                self.signal_manager.update_log.emit(f"클립보드 객체 사용 중 오류: {str(e)}")
-                
-        else:
-            self.signal_manager.update_log.emit("복사할 참가자 목록이 없습니다.")
-            self.signal_manager.update_participant_list.emit("\n복사할 참가자 목록이 없습니다. 먼저 목록을 가져오세요.")
-    except Exception as e:
-        self.signal_manager.update_log.emit(f"\n클립보드 복사 중 오류 발생: {str(e)}")
-        self.signal_manager.update_participant_list.emit(f"\n클립보드 복사 중 오류 발생: {str(e)}")
-        import traceback
-        self.signal_manager.update_log.emit(traceback.format_exc())
+
 
 def scroll_to_top(self, hwnd=None):
     """스크롤을 제일 위로 올립니다."""
@@ -190,9 +156,9 @@ def scroll_down_and_return_to_top(self, hwnd=None, scroll_amount=10):
         time.sleep(0.1)
         
         for _ in range(scroll_amount):
-            win32api.keybd_event(win32con.VK_PGDN, 0, 0, 0)
+            win32api.keybd_event(win32con.VK_NEXT, 0, 0, 0)
             time.sleep(0.05)
-            win32api.keybd_event(win32con.VK_PGDN, 0, win32con.KEYEVENTF_KEYUP, 0)
+            win32api.keybd_event(win32con.VK_NEXT, 0, win32con.KEYEVENTF_KEYUP, 0)
             time.sleep(0.1)
         
         # 다시 맨 위로 스크롤 올림
