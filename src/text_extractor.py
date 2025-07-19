@@ -111,14 +111,30 @@ class TextExtractor:
             
             self.logger.info(f"창 핸들 {window_handle}에 연결 시도")
             
+            # 창 유효성 검사
+            if not win32gui.IsWindow(window_handle):
+                self.logger.error("유효하지 않은 창 핸들입니다.")
+                return []
+            
+            # 창이 보이는지 확인
+            if not win32gui.IsWindowVisible(window_handle):
+                self.logger.error("창이 보이지 않습니다.")
+                return []
+            
             # 창을 활성화
-            if win32gui.IsWindow(window_handle):
+            try:
                 win32gui.SetForegroundWindow(window_handle)
                 time.sleep(0.1)  # 활성화 대기 시간
+            except Exception as e:
+                self.logger.warning(f"창 활성화 실패: {e}")
 
             # pywinauto로 창에 연결
-            app = Application(backend='uia').connect(handle=window_handle)
-            window = app.window(handle=window_handle)
+            try:
+                app = Application(backend='uia').connect(handle=window_handle)
+                window = app.window(handle=window_handle)
+            except Exception as e:
+                self.logger.error(f"pywinauto 연결 실패: {e}")
+                return []
             
             # 창 제목에서 총 참가자 수 추출
             window_title = window.window_text()
@@ -135,12 +151,27 @@ class TextExtractor:
             self.logger.info("참가자 목록 검색 중...")
 
             # 처음에 Home 키를 눌러 맨 위로 스크롤
-            window.set_focus()
-            send_keys('{HOME}')
-            time.sleep(1.0)  # 홈 키 적용 대기 (대기 시간 증가)
+            try:
+                window.set_focus()
+                send_keys('{HOME}')
+                time.sleep(1.0)
+            except Exception as e:
+                self.logger.warning(f"초기 스크롤 실패: {e}")
             
-            # 초기 로딩을 위한 추가 대기
-            time.sleep(2.0)  # Zoom UI가 완전히 로딩될 때까지 대기 (대기 시간 증가)
+            # 참가자 수에 따른 대기 시간 조정
+            from src.common.constants import (
+                LARGE_PARTICIPANT_THRESHOLD, MEDIUM_PARTICIPANT_THRESHOLD,
+                LARGE_PARTICIPANT_INITIAL_DELAY, NORMAL_PARTICIPANT_INITIAL_DELAY,
+                LARGE_PARTICIPANT_SCROLL_ATTEMPTS, LARGE_PARTICIPANT_SCROLL_DELAY, LARGE_PARTICIPANT_CONSECUTIVE_LIMIT,
+                MEDIUM_PARTICIPANT_SCROLL_ATTEMPTS, MEDIUM_PARTICIPANT_SCROLL_DELAY, MEDIUM_PARTICIPANT_CONSECUTIVE_LIMIT,
+                NORMAL_PARTICIPANT_SCROLL_ATTEMPTS, NORMAL_PARTICIPANT_SCROLL_DELAY, NORMAL_PARTICIPANT_CONSECUTIVE_LIMIT,
+                PROGRESS_LOG_INTERVAL
+            )
+            
+            if total_expected > MEDIUM_PARTICIPANT_THRESHOLD:
+                time.sleep(LARGE_PARTICIPANT_INITIAL_DELAY)  # 대규모 참가자일 경우 더 오래 대기
+            else:
+                time.sleep(NORMAL_PARTICIPANT_INITIAL_DELAY)  # 기존 대기 시간
 
             # 추출 시간 측정 시작
             extraction_start = time.time()
@@ -148,26 +179,61 @@ class TextExtractor:
             participants = []
             seen_participants = set()
             
+            # 참가자 수에 따른 스크롤 설정 조정
+            if total_expected > LARGE_PARTICIPANT_THRESHOLD:
+                max_scroll_attempts = LARGE_PARTICIPANT_SCROLL_ATTEMPTS
+                scroll_delay = LARGE_PARTICIPANT_SCROLL_DELAY
+                consecutive_limit = LARGE_PARTICIPANT_CONSECUTIVE_LIMIT
+            elif total_expected > MEDIUM_PARTICIPANT_THRESHOLD:
+                max_scroll_attempts = MEDIUM_PARTICIPANT_SCROLL_ATTEMPTS
+                scroll_delay = MEDIUM_PARTICIPANT_SCROLL_DELAY
+                consecutive_limit = MEDIUM_PARTICIPANT_CONSECUTIVE_LIMIT
+            else:
+                # 소규모 참가자(50명 이하)는 더 빠르게 처리
+                if total_expected <= 50:
+                    max_scroll_attempts = 20  # 매우 적은 스크롤
+                    scroll_delay = 0.5        # 빠른 대기
+                    consecutive_limit = 2     # 빠른 종료
+                else:
+                    max_scroll_attempts = NORMAL_PARTICIPANT_SCROLL_ATTEMPTS
+                    scroll_delay = NORMAL_PARTICIPANT_SCROLL_DELAY
+                    consecutive_limit = NORMAL_PARTICIPANT_CONSECUTIVE_LIMIT
+            
             # 스크롤 관련 변수
             scroll_count = 0
-            max_scroll_attempts = 200  # 스크롤 횟수 대폭 증가
             consecutive_same_view = 0
             prev_count = 0
-            scroll_delay = 1.5  # 스크롤 후 대기 시간 증가
+            last_progress_time = time.time()
+            error_count = 0  # 오류 카운터 추가
 
             def do_scroll(window):
-                for _ in range(2):
-                    window.set_focus()
-                    time.sleep(0.1)
-                send_keys('{PGDN 2}')
-                time.sleep(0.5)
+                try:
+                    for _ in range(2):
+                        window.set_focus()
+                        time.sleep(0.1)
+                    send_keys('{PGDN 2}')
+                    time.sleep(0.5)
+                    return True
+                except Exception as e:
+                    self.logger.warning(f"스크롤 실패: {e}")
+                    return False
 
-            while scroll_count < max_scroll_attempts and consecutive_same_view < 7:
+            self.logger.info(f"스크롤 설정: 최대 {max_scroll_attempts}회, 대기시간 {scroll_delay}초, 연속제한 {consecutive_limit}회")
+
+            while scroll_count < max_scroll_attempts and consecutive_same_view < consecutive_limit:
                 if self._should_stop:
                     self.logger.info("중지 요청으로 추출 중단")
                     break
+                
                 scroll_count += 1
                 current_batch = []
+                
+                # 진행 상황 로깅 (설정된 간격마다)
+                current_time = time.time()
+                if current_time - last_progress_time > PROGRESS_LOG_INTERVAL:
+                    self.logger.info(f"진행 상황: {scroll_count}/{max_scroll_attempts} 스크롤, 현재 {len(participants)}명 발견")
+                    last_progress_time = current_time
+                
                 try:
                     all_elements = window.descendants()
                     for child in all_elements:
@@ -175,39 +241,140 @@ class TextExtractor:
                             text = child.window_text()
                             if not text or len(text.strip()) < 2:
                                 continue
-                            if any(pattern in text for pattern in [
-                                "컴퓨터 오디오", "비디오", "마이크", "스피커", "카메라", "오디오", "참가자"
-                            ]) or (',' in text and len(text.split(',')[0].strip()) > 1):
-                                name = text.split(',')[0].strip()
-                                if name and not any(x in name.lower() for x in [
-                                    '검색', '초대', '총 참가자', '모두에게 메시지 보내기', 
-                                    '참가자', '참석자', 'host', 'co-host', '참가자 목록'
-                                ]):
-                                    clean_name = name.split('(')[0].strip()
-                                    if clean_name and len(clean_name) > 1:
-                                        current_batch.append(clean_name)
-                                        if clean_name not in seen_participants:
-                                            participants.append(clean_name)
-                                            seen_participants.add(clean_name)
-                        except Exception:
+                            
+                            # 개선된 참가자 패턴 매칭
+                            is_participant = False
+                            
+                            # 먼저 확실히 제외할 UI 요소들 체크
+                            exclude_patterns = [
+                                # 창 컨트롤
+                                '시스템', '최소화', '최대화', '닫기', '복원',
+                                # 메뉴 항목
+                                '전화 참가자 목록', '초대', '모두 음소거', '모든 참가자 관리',
+                                '추가 옵션', '음소거 해제', '음소거', '비디오 시작', '비디오 중지',
+                                # 기타 UI 요소
+                                '검색', '총 참가자', '모두에게 메시지 보내기', 
+                                '참가자', '참석자', 'host', 'co-host', '참가자 목록',
+                                'button', 'edit', 'combo', 'list', 'scroll', 'menu', 'toolbar',
+                                '상태', '정보', '설정', '옵션', '관리', '보기', '도움말'
+                            ]
+                            
+                            # 제외 패턴에 해당하면 건너뛰기
+                            if any(x in text for x in exclude_patterns):
+                                continue
+                            
+                            # 참가자 패턴 매칭
+                            # 1. 쉼표가 있는 텍스트 (참가자 이름 + 상태) - 가장 확실한 패턴
+                            if ',' in text and len(text.split(',')[0].strip()) > 1:
+                                name_part = text.split(',')[0].strip()
+                                # 이름 부분이 제외 패턴에 없고, 적절한 길이인 경우
+                                if (len(name_part) > 1 and len(name_part) < 50 and 
+                                    not any(x in name_part.lower() for x in exclude_patterns)):
+                                    is_participant = True
+                            
+                            # 2. 괄호가 있는 텍스트 (참가자 이름 + 역할)
+                            elif '(' in text and ')' in text and len(text.split('(')[0].strip()) > 1:
+                                name_part = text.split('(')[0].strip()
+                                if (len(name_part) > 1 and len(name_part) < 50 and 
+                                    not any(x in name_part.lower() for x in exclude_patterns)):
+                                    is_participant = True
+                            
+                            # 3. 특정 키워드가 포함된 텍스트 (참가자 상태 정보)
+                            elif any(pattern in text for pattern in [
+                                "컴퓨터 오디오", "비디오", "마이크", "스피커", "카메라", "오디오"
+                            ]):
+                                # 키워드가 포함되어 있지만, 실제 이름 부분이 있는지 확인
+                                if ',' in text:
+                                    name_part = text.split(',')[0].strip()
+                                    if (len(name_part) > 1 and len(name_part) < 50 and 
+                                        not any(x in name_part.lower() for x in exclude_patterns)):
+                                        is_participant = True
+                            
+                            # 4. 단순 텍스트 (참가자 이름일 가능성) - 가장 엄격하게 체크
+                            elif (len(text.strip()) > 2 and len(text.strip()) < 30 and 
+                                  not any(x in text.lower() for x in exclude_patterns)):
+                                # 한글이나 영문이 포함되어 있는지 확인
+                                import re
+                                if re.search(r'[가-힣a-zA-Z]', text):
+                                    is_participant = True
+                            
+                            if is_participant:
+                                # 참가자 이름 추출
+                                if ',' in text:
+                                    name = text.split(',')[0].strip()
+                                elif '(' in text:
+                                    name = text.split('(')[0].strip()
+                                else:
+                                    name = text.strip()
+                                
+                                # 이름 정리
+                                clean_name = name.split('(')[0].strip()
+                                if clean_name and len(clean_name) > 1:
+                                    current_batch.append(clean_name)
+                                    if clean_name not in seen_participants:
+                                        participants.append(clean_name)
+                                        seen_participants.add(clean_name)
+                                        
+                        except Exception as e:
+                            error_count += 1
+                            if error_count <= 5:  # 처음 5개 오류만 로깅
+                                self.logger.debug(f"요소 처리 중 오류 (무시됨): {e}")
                             continue
+                            
                 except Exception as e:
+                    error_count += 1
                     self.logger.error(f"요소 처리 중 오류: {str(e)}")
+                    if error_count > 10:  # 오류가 너무 많으면 중단
+                        self.logger.error("오류가 너무 많아 추출을 중단합니다.")
+                        break
+                
                 # 스크롤 후 충분히 대기
                 time.sleep(scroll_delay)
+                
                 # 동일 참가자 수 반복 체크
                 if len(participants) == prev_count:
                     consecutive_same_view += 1
                 else:
                     consecutive_same_view = 0
                 prev_count = len(participants)
-                do_scroll(window)
+                
+                # 조기 종료 조건: 모든 참가자를 찾았거나 충분히 스크롤했을 때
+                if total_expected > 0 and len(participants) >= total_expected:
+                    self.logger.info(f"모든 참가자를 찾았습니다! ({len(participants)}명)")
+                    break
+                elif scroll_count >= 5 and len(participants) > 0 and consecutive_same_view >= 2:
+                    self.logger.info(f"충분히 스크롤했고 새로운 참가자가 없어 조기 종료합니다. (현재 {len(participants)}명)")
+                    break
+                
+                # 스크롤 실행
+                if not do_scroll(window):
+                    error_count += 1
+                    if error_count > 5:
+                        self.logger.error("스크롤 오류가 너무 많아 중단합니다.")
+                        break
+            
             # 추출 후 안내
-            if total_expected > 0 and len(participants) < total_expected:
-                self.logger.warning(f"Zoom에 표시된 참가자 수({total_expected})와 추출된 참가자 수({len(participants)})가 다릅니다. 스크롤 속도/대기 시간을 늘려보세요.")
+            if total_expected > 0:
+                if len(participants) < total_expected:
+                    missing_count = total_expected - len(participants)
+                    missing_percentage = (missing_count / total_expected) * 100
+                    self.logger.warning(f"Zoom에 표시된 참가자 수({total_expected})와 추출된 참가자 수({len(participants)})가 다릅니다.")
+                    self.logger.warning(f"누락된 참가자: {missing_count}명 ({missing_percentage:.1f}%)")
+                    if missing_percentage > 10:
+                        self.logger.warning("높은 누락률입니다. 스크롤 횟수나 대기 시간을 늘려보세요.")
+                else:
+                    self.logger.info(f"모든 참가자를 성공적으로 추출했습니다! ({len(participants)}명)")
+            
             total_time = time.time() - start_time
             self.logger.info(f"[시간 측정] 참가자 추출 완료: 총 {len(participants)}명")
             self.logger.info(f"[시간 측정] 총 소요 시간: {total_time:.3f}초")
+            if total_time > 0:
+                self.logger.info(f"[시간 측정] 평균 처리 속도: {len(participants)/total_time:.1f}명/초")
+            
+            # 오류 통계
+            if error_count > 0:
+                self.logger.info(f"처리 중 발생한 오류: {error_count}개")
+            
             return participants
         except Exception as e:
             self.logger.error(f"참가자 목록 추출 중 오류 발생: {str(e)}")
