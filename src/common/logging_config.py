@@ -3,12 +3,13 @@ import os
 import logging
 import datetime
 
-def setup_logging(log_level=logging.INFO, log_to_file=True):
+def setup_logging(log_level=logging.INFO, log_to_file=True, log_format=None):
     """로깅 설정
     
     Args:
         log_level: 로깅 레벨
         log_to_file: 파일 로깅 여부
+        log_format: 로그 포맷 (None이면 기본값 사용)
     """
     # 로그 디렉토리 생성
     if log_to_file:
@@ -20,13 +21,16 @@ def setup_logging(log_level=logging.INFO, log_to_file=True):
         log_file = os.path.join(log_dir, f'zoom_check_{timestamp}.log')
     
     # 로깅 포맷 설정
-    log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    if log_format is None:
+        log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     
     # 로깅 핸들러 설정
     handlers = [logging.StreamHandler()]
     
     if log_to_file:
-        handlers.append(logging.FileHandler(log_file, encoding='utf-8'))
+        file_handler = logging.FileHandler(log_file, encoding='utf-8')
+        file_handler.setLevel(logging.DEBUG)  # 파일에는 모든 로그 기록
+        handlers.append(file_handler)
     
     # 로깅 설정
     logging.basicConfig(
@@ -34,6 +38,25 @@ def setup_logging(log_level=logging.INFO, log_to_file=True):
         format=log_format,
         handlers=handlers
     )
+    
+    # 특정 모듈의 로그 레벨 조정
+    logging.getLogger('pywinauto').setLevel(logging.WARNING)
+    logging.getLogger('win32gui').setLevel(logging.WARNING)
+    
+    # 성능 모니터링을 위한 로거
+    perf_logger = logging.getLogger('performance')
+    perf_logger.setLevel(logging.INFO)
+    
+    return log_file if log_to_file else None
+
+def log_performance(operation, start_time, end_time, details=None):
+    """성능 로깅 헬퍼 함수"""
+    duration = end_time - start_time
+    perf_logger = logging.getLogger('performance')
+    message = f"PERF: {operation} - {duration:.3f}초"
+    if details:
+        message += f" - {details}"
+    perf_logger.info(message)
 
 def setup_gui_logging(log_widget, log_level=logging.INFO):
     """GUI용 로깅 설정

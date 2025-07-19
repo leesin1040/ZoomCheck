@@ -31,16 +31,31 @@ class TextExtractor:
         self.extraction_active = False
         self.stop_scrolling = False
         self._should_stop = False  # 중지 플래그 추가
+        
+        # 입퇴장 트래킹을 위한 변수들
+        self.previous_participants = set()  # 이전 참가자 목록
+        self.join_history = []  # 입장 기록
+        self.leave_history = []  # 퇴장 기록
+        self.tracking_enabled = True  # 트래킹 활성화 여부
+        
+        # COM 초기화 (더 안전하게)
+        self.com_initialized = False
         try:
             pythoncom.CoInitialize()
-        except:
-            pass
+            self.com_initialized = True
+            self.logger.debug("COM 초기화 성공")
+        except Exception as e:
+            self.logger.warning(f"COM 초기화 실패 (무시됨): {e}")
+            self.com_initialized = False
 
     def __del__(self):
-        try:
-            pythoncom.CoUninitialize()
-        except:
-            pass
+        # COM 정리 (더 안전하게)
+        if hasattr(self, 'com_initialized') and self.com_initialized:
+            try:
+                pythoncom.CoUninitialize()
+                self.logger.debug("COM 정리 완료")
+            except Exception as e:
+                self.logger.warning(f"COM 정리 실패 (무시됨): {e}")
 
     def get_current_time(self):
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -49,6 +64,172 @@ class TextExtractor:
         """참가자 추출을 중단합니다."""
         self.logger.info("참가자 추출 중단 요청 받음")
         self._should_stop = True  # 중지 플래그 설정
+
+    def extract_participants_with_retry(self, window_handle, max_retries=3):
+        """재시도 기능이 포함된 참가자 추출"""
+        for attempt in range(max_retries):
+            try:
+                self.logger.info(f"참가자 추출 시도 {attempt + 1}/{max_retries}")
+                result = self.extract_participants(window_handle)
+                
+                if result:
+                    self.logger.info(f"추출 성공! {len(result)}명의 참가자를 찾았습니다.")
+                    # GUI 호환성을 위해 (참가자목록, 중복정보) 튜플 반환
+                    return (result, {})
+                else:
+                    self.logger.warning(f"시도 {attempt + 1}에서 참가자를 찾지 못했습니다.")
+                    
+            except Exception as e:
+                self.logger.error(f"시도 {attempt + 1}에서 오류 발생: {e}")
+            
+            # 마지막 시도가 아니면 잠시 대기 후 재시도
+            if attempt < max_retries - 1:
+                wait_time = (attempt + 1) * 2  # 점진적으로 대기 시간 증가
+                self.logger.info(f"{wait_time}초 후 재시도합니다...")
+                time.sleep(wait_time)
+        
+        self.logger.error(f"모든 시도({max_retries}회) 후에도 추출에 실패했습니다.")
+        return ([], {})
+
+    def track_participant_changes(self, current_participants):
+        """참가자 변화를 추적하고 입퇴장 기록을 업데이트합니다."""
+        try:
+            if not self.tracking_enabled:
+                self.logger.info("❌ 트래킹이 비활성화되어 있습니다.")
+                return [], []
+            
+            # 입력 검증
+            if not isinstance(current_participants, (list, tuple)):
+                self.logger.error("잘못된 참가자 목록 형식입니다.")
+                return [], []
+            
+            # 참가자 목록 안전하게 처리
+            try:
+                current_set = set()
+                for participant in current_participants:
+                    if participant is not None:
+                        safe_name = str(participant).strip()
+                        if safe_name:
+                            current_set.add(safe_name)
+            except Exception as e:
+                self.logger.error(f"참가자 목록 처리 중 오류: {e}")
+                return [], []
+            
+            current_time = self.get_current_time()
+            
+            # 강화된 디버깅 로그
+            self.logger.info(f"🔍 트래킹 디버그: 현재 참가자 수: {len(current_set)}")
+            self.logger.info(f"🔍 트래킹 디버그: 이전 참가자 수: {len(self.previous_participants)}")
+            
+            # 첫 번째 실행인지 확인
+            if not self.previous_participants:
+                self.logger.info("🔄 첫 번째 실행: 이전 참가자 목록이 비어있습니다.")
+                self.logger.info(f"📝 기준점 설정: {len(current_set)}명의 참가자")
+                self.previous_participants = current_set
+                return [], []
+            
+            # 새로 들어온 참가자 (입장)
+            new_participants = current_set - self.previous_participants
+            for participant in new_participants:
+                try:
+                    # 참가자 이름 안전하게 처리
+                    safe_name = str(participant).strip()
+                    if safe_name:
+                        join_record = {
+                            'name': safe_name,
+                            'time': current_time,
+                            'timestamp': time.time()
+                        }
+                        self.join_history.append(join_record)
+                        self.logger.info(f"🟢 입장: {safe_name} ({current_time})")
+                except Exception as e:
+                    self.logger.error(f"입장 기록 처리 중 오류: {e}")
+                    continue  # 개별 참가자 오류는 무시하고 계속 진행
+            
+            # 나간 참가자 (퇴장)
+            left_participants = self.previous_participants - current_set
+            for participant in left_participants:
+                try:
+                    # 참가자 이름 안전하게 처리
+                    safe_name = str(participant).strip()
+                    if safe_name:
+                        leave_record = {
+                            'name': safe_name,
+                            'time': current_time,
+                            'timestamp': time.time()
+                        }
+                        self.leave_history.append(leave_record)
+                        self.logger.info(f"🔴 퇴장: {safe_name} ({current_time})")
+                except Exception as e:
+                    self.logger.error(f"퇴장 기록 처리 중 오류: {e}")
+                    continue  # 개별 참가자 오류는 무시하고 계속 진행
+            
+            # 상세 로그 (변화가 있을 때만, 안전하게)
+            if new_participants or left_participants:
+                self.logger.info("=== 참가자 변화 감지 ===")
+                try:
+                    self.logger.info(f"이전 참가자: {len(self.previous_participants)}명")
+                    self.logger.info(f"현재 참가자: {len(current_set)}명")
+                    if new_participants:
+                        self.logger.info(f"새로 입장: {len(new_participants)}명")
+                    if left_participants:
+                        self.logger.info(f"퇴장: {len(left_participants)}명")
+                except Exception as e:
+                    self.logger.error(f"상세 로그 출력 중 오류: {e}")
+                self.logger.info("========================")
+            else:
+                self.logger.info("✅ 참가자 변화가 없습니다.")
+            
+            # 이전 참가자 목록 업데이트 (안전하게)
+            try:
+                self.previous_participants = current_set
+            except Exception as e:
+                self.logger.error(f"이전 참가자 목록 업데이트 중 오류: {e}")
+            
+            return list(new_participants), list(left_participants)
+            
+        except Exception as e:
+            self.logger.error(f"참가자 변화 추적 중 오류 발생: {e}")
+            import traceback
+            self.logger.error(f"트래킹 오류 상세: {traceback.format_exc()}")
+            # 프로그램이 종료되지 않도록 빈 리스트 반환
+            return [], []
+
+    def get_join_leave_summary(self, hours=24):
+        """지정된 시간 내의 입퇴장 요약을 반환합니다."""
+        if not self.tracking_enabled:
+            return {
+                'joins': [],
+                'leaves': [],
+                'total_joins': 0,
+                'total_leaves': 0
+            }
+        
+        current_time = time.time()
+        time_limit = current_time - (hours * 3600)
+        
+        recent_joins = [record for record in self.join_history if record['timestamp'] > time_limit]
+        recent_leaves = [record for record in self.leave_history if record['timestamp'] > time_limit]
+        
+        return {
+            'joins': recent_joins,
+            'leaves': recent_leaves,
+            'total_joins': len(recent_joins),
+            'total_leaves': len(recent_leaves)
+        }
+
+    def clear_tracking_history(self):
+        """입퇴장 추적 기록을 초기화합니다."""
+        self.join_history.clear()
+        self.leave_history.clear()
+        self.previous_participants.clear()
+        self.logger.info("입퇴장 추적 기록이 초기화되었습니다.")
+
+    def enable_tracking(self, enabled=True):
+        """입퇴장 추적 기능을 활성화/비활성화합니다."""
+        self.tracking_enabled = enabled
+        status = "활성화" if enabled else "비활성화"
+        self.logger.info(f"입퇴장 추적 기능이 {status}되었습니다.")
 
     def clean_participant_name(self, raw_text):
         """참가자 이름만 깔끔하게 추출"""
@@ -96,11 +277,9 @@ class TextExtractor:
     def extract_participants(self, window_handle):
         """Zoom 참가자 창에서 참가자 목록을 추출합니다."""
         try:
-            # COM 초기화 (필요할 경우)
-            try:
-                pythoncom.CoInitialize()
-            except:
-                pass
+            # COM은 이미 __init__에서 초기화됨
+            if not self.com_initialized:
+                self.logger.warning("COM이 초기화되지 않았습니다. 일부 기능이 제한될 수 있습니다.")
 
             # 중지 플래그 초기화
             self._should_stop = False
@@ -375,6 +554,46 @@ class TextExtractor:
             if error_count > 0:
                 self.logger.info(f"처리 중 발생한 오류: {error_count}개")
             
+            # 입퇴장 트래킹 실행 (안전하게)
+            try:
+                self.logger.info(f"🎯 트래킹 시작: 활성화={self.tracking_enabled}, 참가자 수={len(participants)}")
+                
+                if self.tracking_enabled:
+                    new_participants, left_participants = self.track_participant_changes(participants)
+                    
+                    # 입퇴장 정보 요약 (안전하게)
+                    if new_participants or left_participants:
+                        self.logger.info("🎉 입퇴장 변화 요약:")
+                        if new_participants:
+                            try:
+                                safe_names = [str(name).strip() for name in new_participants if str(name).strip()]
+                                self.logger.info(f"  🟢 입장: {len(new_participants)}명")
+                                if safe_names:
+                                    self.logger.info(f"    - {', '.join(safe_names[:5])}")  # 최대 5명만 표시
+                                    if len(safe_names) > 5:
+                                        self.logger.info(f"    - ... 외 {len(safe_names) - 5}명")
+                            except Exception as e:
+                                self.logger.error(f"입장 정보 출력 중 오류: {e}")
+                        
+                        if left_participants:
+                            try:
+                                safe_names = [str(name).strip() for name in left_participants if str(name).strip()]
+                                self.logger.info(f"  🔴 퇴장: {len(left_participants)}명")
+                                if safe_names:
+                                    self.logger.info(f"    - {', '.join(safe_names[:5])}")  # 최대 5명만 표시
+                                    if len(safe_names) > 5:
+                                        self.logger.info(f"    - ... 외 {len(safe_names) - 5}명")
+                            except Exception as e:
+                                self.logger.error(f"퇴장 정보 출력 중 오류: {e}")
+                    else:
+                        self.logger.info("✅ 참가자 변화가 없습니다.")
+                else:
+                    self.logger.info("❌ 트래킹이 비활성화되어 있습니다.")
+            except Exception as e:
+                self.logger.error(f"트래킹 실행 중 오류 발생: {e}")
+                import traceback
+                self.logger.error(traceback.format_exc())
+            
             return participants
         except Exception as e:
             self.logger.error(f"참가자 목록 추출 중 오류 발생: {str(e)}")
@@ -382,10 +601,8 @@ class TextExtractor:
             self.logger.error(traceback.format_exc())
             return []
         finally:
-            try:
-                pythoncom.CoUninitialize()
-            except:
-                pass
+            # COM은 __del__에서 정리됨
+            pass
 
     def _extract_with_ui_elements(self, window, total_expected):
         """UI 요소 탐색 방식으로 참가자 추출 (폴백용)"""

@@ -3,14 +3,16 @@ import logging
 import os
 import threading
 from datetime import datetime
+import time
 
 # PyQt6 import
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QPushButton, QTextEdit, QHBoxLayout, QLabel,
-    QSplitter
+    QSplitter, QMenu
 )
-from PyQt6.QtCore import QObject, pyqtSignal, Qt
+from PyQt6.QtGui import QAction
+from PyQt6.QtCore import QObject, pyqtSignal, Qt, QTimer
 from PyQt6.QtGui import QFont
 
 from .window_finder import WindowFinder
@@ -49,6 +51,12 @@ class ZoomCheckGUI(QMainWindow):
         self.current_participants = []
         self.current_duplicate_info = {}
         
+        # TextExtractor 초기화
+        self.text_extractor = TextExtractor()
+        
+        # 추출 진행 상태
+        self.extraction_in_progress = False
+        
         # 시그널 매니저 초기화
         self.signal_manager = SignalManager()
         
@@ -62,7 +70,7 @@ class ZoomCheckGUI(QMainWindow):
         
         # 로깅 설정
         self.setup_logging()
-    
+        
     def setup_logging(self):
         """로깅 핸들러 설정"""
         # 기존 핸들러 제거
@@ -101,22 +109,16 @@ class ZoomCheckGUI(QMainWindow):
         central_widget.setLayout(main_layout)
         self.setCentralWidget(central_widget)
         
-        # 버튼 영역
+        # 참가자 목록 관련 버튼들
         button_layout = QHBoxLayout()
         
-        # 참가자 새로고침 버튼
+        # 참가자 목록 가져오기 버튼
         self.refresh_button = QPushButton('참가자 목록 가져오기')
         self.refresh_button.clicked.connect(self.refresh_participants)
         button_layout.addWidget(self.refresh_button)
         
-        # 중지 버튼
-        self.stop_button = QPushButton('중지')
-        self.stop_button.clicked.connect(self.stop_extraction)
-        self.stop_button.setEnabled(False)
-        button_layout.addWidget(self.stop_button)
-        
-        # 클립보드 복사 버튼
-        self.copy_button = QPushButton('참가자 목록 복사')
+        # 클립보드에 복사 버튼
+        self.copy_button = QPushButton('클립보드에 복사')
         self.copy_button.clicked.connect(self.copy_to_clipboard)
         button_layout.addWidget(self.copy_button)
         
@@ -152,6 +154,19 @@ class ZoomCheckGUI(QMainWindow):
         self.log_area = QTextEdit()
         self.log_area.setReadOnly(True)
         self.log_area.setFont(font)
+        # 로그창을 선택 가능하게 만들고 기본 복사 기능 활성화
+        self.log_area.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
+        # 로그창에 컨텍스트 메뉴 추가 (복사 기능)
+        self.log_area.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.log_area.customContextMenuRequested.connect(self.show_log_context_menu)
+        
+        # 키보드 단축키 추가
+        from PyQt6.QtGui import QKeySequence, QShortcut
+        copy_shortcut = QShortcut(QKeySequence.StandardKey.Copy, self.log_area)
+        copy_shortcut.activated.connect(self.copy_selected_log)
+        select_all_shortcut = QShortcut(QKeySequence.StandardKey.SelectAll, self.log_area)
+        select_all_shortcut.activated.connect(self.log_area.selectAll)
+        
         log_layout.addWidget(self.log_area)
         
         # 분할기에 위젯 추가
@@ -169,195 +184,104 @@ class ZoomCheckGUI(QMainWindow):
         self.participant_area.append(instructions)
     
     def refresh_participants(self):
-        """참가자 목록 새로고침"""
+        """참가자 목록을 새로 가져옵니다."""
         if not self.extraction_in_progress:
             self.extraction_in_progress = True
-            self.refresh_button.setEnabled(False)
-            self.copy_button.setEnabled(False)
-            self.stop_button.setEnabled(True)
+            self.set_buttons_enabled(False)
             
             # 백그라운드 스레드에서 실행
             extraction_thread = threading.Thread(target=self._extract_participants)
             extraction_thread.daemon = True
             extraction_thread.start()
-    
-    def stop_extraction(self):
-        """참가자 추출 중단"""
-        if self.extraction_in_progress:
-            try:
-                # TextExtractor의 stop_extraction 메서드 호출
-                if hasattr(self, 'text_extractor') and hasattr(self.text_extractor, 'stop_extraction'):
-                    self.text_extractor.stop_extraction()
-                    self.signal_manager.update_log.emit("참가자 목록 추출 중단 요청됨...")
-                    self.signal_manager.update_participant_list.emit("참가자 목록 추출 중단 요청됨...")
-                else:
-                    self.signal_manager.update_log.emit("Warning: TextExtractor에 stop_extraction 메서드가 없습니다.")
-            except Exception as e:
-                self.signal_manager.update_log.emit(f"중지 요청 중 오류: {str(e)}")
-            
-            self.stop_button.setEnabled(False)
-    
+        else:
+            self.signal_manager.update_log.emit("이미 참가자 목록을 가져오는 중입니다.")
+
     def _extract_participants(self):
-        """별도 스레드에서 참가자 추출 실행"""
+        """백그라운드에서 참가자 목록을 추출합니다."""
         try:
-            # 로그 및 텍스트 추출기 초기화
-            logging.info("참가자 추출 시작")
-            self.text_extractor = TextExtractor()  # 여기서 초기화
-            
-            self.signal_manager.update_log.emit("Zoom 참가자 창 검색 중...")
-            self.signal_manager.update_participant_list.emit("Zoom 참가자 창 검색 중...")
-            
-            # 정적 메서드 호출
+            if not hasattr(self, 'text_extractor') or self.text_extractor is None:
+                self.signal_manager.update_log.emit("TextExtractor가 초기화되지 않았습니다.")
+                return
+                
+            # Zoom 창 찾기
             window_handle = WindowFinder.find_zoom_window()
             
             if window_handle:
-                self.signal_manager.update_log.emit(f"참가자 창 발견! 목록 추출 중...")
-                self.signal_manager.update_participant_list.emit("참가자 창 발견! 목록 추출 중...")
+                self.signal_manager.update_log.emit("Zoom 창을 찾았습니다. 참가자 목록을 가져오는 중...")
                 
-                try:
-                    # 값 추출 시도
-                    result = self.text_extractor.extract_participants(window_handle)
+                # 참가자 추출
+                result = self.text_extractor.extract_participants_with_retry(window_handle)
+                
+                if isinstance(result, tuple) and len(result) >= 2:
+                    participants = result[0]
+                    duplicate_info = result[1]
                     
-                    # 반환 값이 튜플(리스트, 딕셔너리)인지 확인
-                    if isinstance(result, tuple) and len(result) >= 2:
-                        participants = result[0]  # 첫 번째 항목은 참가자 목록
-                        duplicate_info = result[1] if len(result) > 1 else {}  # 두 번째 항목은 중복 정보
+                    # 결과 저장 (복사 기능용)
+                    self.current_participants = participants
+                    self.current_duplicate_info = duplicate_info
+                    
+                    if participants:
+                        # 참가자 목록 표시
+                        participant_text = f"\n=== 참가자 목록 ({len(participants)}명) ===\n"
+                        for i, participant in enumerate(participants, 1):
+                            participant_text += f"{i:3d}. {participant}\n"
                         
-                        # 결과 저장
-                        self.current_participants = participants
-                        self.current_duplicate_info = duplicate_info
+                        # 중복 정보 표시
+                        if duplicate_info:
+                            participant_text += "\n[중복 정보]\n"
+                            for name, info in duplicate_info.items():
+                                participant_text += f"• '{name}': {info['count']}번 발견\n"
+                                if isinstance(info['details'], str):
+                                    participant_text += f"  → 상태: {info['details']}\n"
+                                elif isinstance(info['details'], list):
+                                    participant_text += f"  → 상태: {info['details'][0]}\n"
                         
-                    elif isinstance(result, list):
-                        # 이전 버전 호환성 - 단일 리스트만 반환하는 경우
-                        participants = result
-                        duplicate_info = {}
-                        
-                        # 결과 저장
-                        self.current_participants = participants
-                        self.current_duplicate_info = {}
-                        
+                        self.signal_manager.update_participant_list.emit(participant_text)
+                        self.signal_manager.update_log.emit(f"✅ 참가자 목록을 성공적으로 가져왔습니다. (총 {len(participants)}명)")
                     else:
-                        # 기타 경우
-                        participants = []
-                        duplicate_info = {}
-                        
-                        # 결과 초기화
-                        self.current_participants = []
-                        self.current_duplicate_info = {}
-                
-                except Exception as e:
-                    self.signal_manager.update_log.emit(f"값 추출 중 오류: {str(e)}")
-                    self.signal_manager.update_participant_list.emit(f"값 추출 중 오류: {str(e)}")
-                    import traceback
-                    self.signal_manager.update_log.emit(traceback.format_exc())
-                    participants = []
-                    duplicate_info = {}
-                    
-                    # 결과 초기화
-                    self.current_participants = []
-                    self.current_duplicate_info = {}
-                
-                if participants:
-                    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    
-                    # 중복 개수 계산
-                    true_duplicates = {}
-                    possible_duplicates = {}
-                    
-                    for name, info in duplicate_info.items():
-                        if info.get('type') == '정확한 중복':
-                            true_duplicates[name] = info
-                        elif info.get('type') == '동명이인 가능성':
-                            possible_duplicates[name] = info
-                    
-                    # 헤더 표시
-                    header = f"\n[{now}] 현재 참가자 목록 ({len(participants)}명)"
-                    if true_duplicates:
-                        total_true_dups = sum(info['count'] - 1 for info in true_duplicates.values())
-                        header += f", 확실한 중복 {total_true_dups}개"
-                    if possible_duplicates:
-                        possible_dup_count = len(possible_duplicates)
-                        header += f", 동명이인 가능성 {possible_dup_count}개"
-                    
-                    # 참가자 목록 표시
-                    self.signal_manager.update_participant_list.emit(header + ":")
-                    
-                    for participant in participants:
-                        self.signal_manager.update_participant_list.emit(participant)
-                    
+                        self.signal_manager.update_participant_list.emit("\n참가자 목록을 가져올 수 없습니다.")
+                        self.signal_manager.update_log.emit("❌ 참가자 목록이 비어있습니다.")
                 else:
-                    self.signal_manager.update_log.emit("참가자를 찾을 수 없습니다.")
-                    self.signal_manager.update_participant_list.emit("참가자를 찾을 수 없습니다.")
+                    self.signal_manager.update_participant_list.emit("\n참가자 목록 추출에 실패했습니다.")
+                    self.signal_manager.update_log.emit("❌ 참가자 목록 추출 결과가 올바르지 않습니다.")
             else:
-                self.signal_manager.update_log.emit("Zoom 참가자 창을 찾을 수 없습니다. Zoom 미팅이 실행 중이고 참가자 목록이 열려있는지 확인해주세요.")
-                self.signal_manager.update_participant_list.emit("Zoom 참가자 창을 찾을 수 없습니다. Zoom 미팅이 실행 중이고 참가자 목록이 열려있는지 확인해주세요.")
-        
+                self.signal_manager.update_participant_list.emit("\nZoom 창을 찾을 수 없습니다.")
+                self.signal_manager.update_log.emit("❌ Zoom 창을 찾을 수 없습니다.")
+                
         except Exception as e:
-            self.signal_manager.update_log.emit(f"오류 발생: {str(e)}")
-            self.signal_manager.update_participant_list.emit(f"오류 발생: {str(e)}")
+            self.signal_manager.update_log.emit(f"❌ 참가자 목록 가져오기 중 오류 발생: {str(e)}")
             import traceback
             self.signal_manager.update_log.emit(traceback.format_exc())
-        
         finally:
-            # 완료 후 상태 초기화
             self.extraction_in_progress = False
-            self.signal_manager.enable_buttons.emit(True)
-            
-            # 중지 요청이 들어왔다면 메시지 표시
-            if hasattr(self, 'text_extractor') and hasattr(self.text_extractor, '_should_stop') and self.text_extractor._should_stop:
-                self.signal_manager.update_log.emit("사용자 요청으로 참가자 추출이 중단되었습니다.")
-                self.signal_manager.update_participant_list.emit("\n사용자 요청으로 참가자 추출이 중단되었습니다.")
+            self.set_buttons_enabled(True)
     
     def copy_to_clipboard(self):
         """최신 참가자 목록을 클립보드에 복사합니다."""
         try:
-            if self.current_participants:
-                # 중복 분류
-                true_duplicates = {}
-                possible_duplicates = {}
-                
-                for name, info in self.current_duplicate_info.items():
-                    if info.get('type') == '정확한 중복':
-                        true_duplicates[name] = info
-                    elif info.get('type') == '동명이인 가능성':
-                        possible_duplicates[name] = info
-                
+            if hasattr(self, 'current_participants') and self.current_participants:
                 # 현재 시간 기준 헤더 생성
+                from datetime import datetime
                 now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                header = f"[{now}] 현재 참가자 목록 ({len(self.current_participants)}명)"
                 
-                if true_duplicates:
-                    total_true_dups = sum(info['count'] - 1 for info in true_duplicates.values())
-                    header += f", 확실한 중복 {total_true_dups}개"
-                if possible_duplicates:
-                    possible_dup_count = len(possible_duplicates)
-                    header += f", 동명이인 가능성 {possible_dup_count}개"
+                # 클립보드용 텍스트 생성
+                clipboard_text = f"[{now}] 참가자 목록 ({len(self.current_participants)}명):\n"
                 
-                # 클립보드용 텍스트 생성 - 참가자 목록 먼저
-                clipboard_text = f"{header}:\n" + "\n".join(self.current_participants)
+                # 참가자 목록 추가 (번호 없이)
+                for participant in self.current_participants:
+                    clipboard_text += f"{participant}\n"
                 
-                # 중복 정보도 클립보드에 추가
-                if self.current_duplicate_info:
-                    clipboard_text += "\n\n=== 중복 이름 분석 ===\n"
-                    
-                    if true_duplicates:
-                        clipboard_text += "\n[확실한 중복]\n"
-                        for name, info in true_duplicates.items():
-                            clipboard_text += f"• '{name}'이(가) {info['count']}번 발견됨 (동일한 상태)\n"
-                            if isinstance(info['details'], str):
-                                clipboard_text += f"  → 상태: {info['details']}\n"
-                            elif isinstance(info['details'], list):
-                                clipboard_text += f"  → 상태: {info['details'][0]}\n"
-                    
-                    if possible_duplicates:
-                        clipboard_text += "\n[동명이인 가능성]\n"
-                        for name, info in possible_duplicates.items():
-                            clipboard_text += f"• '{name}'이(가) {info['count']}번 발견됨 (서로 다른 상태)\n"
-                            if isinstance(info['details'], list):
-                                for i, status in enumerate(info['details']):
-                                    clipboard_text += f"  → 상태 {i+1}: {status}\n"
+                # 중복 정보 추가
+                if hasattr(self, 'current_duplicate_info') and self.current_duplicate_info:
+                    clipboard_text += "\n=== 중복 정보 ===\n"
+                    for name, info in self.current_duplicate_info.items():
+                        clipboard_text += f"• '{name}': {info['count']}번 발견\n"
+                        if isinstance(info['details'], str):
+                            clipboard_text += f"  → 상태: {info['details']}\n"
+                        elif isinstance(info['details'], list):
+                            clipboard_text += f"  → 상태: {info['details'][0]}\n"
                 
-                # 윈도우 API를 사용한 클립보드 접근
+                # 클립보드에 복사
                 try:
                     import win32clipboard
                     import win32con
@@ -367,24 +291,17 @@ class ZoomCheckGUI(QMainWindow):
                     win32clipboard.SetClipboardText(clipboard_text, win32con.CF_UNICODETEXT)
                     win32clipboard.CloseClipboard()
                     
-                    self.signal_manager.update_participant_list.emit("\n클립보드에 참가자 목록이 복사되었습니다.")
+                    self.signal_manager.update_log.emit("✅ 참가자 목록이 클립보드에 복사되었습니다.")
                 except Exception as clipboard_error:
-                    self.signal_manager.update_log.emit(f"윈도우 클립보드 API 오류: {str(clipboard_error)}")
-                    
                     # 실패 시 PyQt 방식으로 다시 시도
-                    try:
-                        clipboard = QApplication.clipboard()
-                        clipboard.setText(clipboard_text)
-                        self.signal_manager.update_participant_list.emit("\n클립보드에 참가자 목록이 복사되었습니다.")
-                    except Exception as qt_error:
-                        self.signal_manager.update_log.emit(f"Qt 클립보드 API 오류: {str(qt_error)}")
+                    clipboard = QApplication.clipboard()
+                    clipboard.setText(clipboard_text)
+                    self.signal_manager.update_log.emit("✅ 참가자 목록이 클립보드에 복사되었습니다.")
+                    
             else:
-                self.signal_manager.update_participant_list.emit("\n복사할 참가자 목록이 없습니다. 먼저 목록을 가져오세요.")
+                self.signal_manager.update_log.emit("⚠️ 복사할 참가자 목록이 없습니다. 먼저 목록을 가져오세요.")
         except Exception as e:
-            self.signal_manager.update_log.emit(f"\n클립보드 복사 중 오류 발생: {str(e)}")
-            self.signal_manager.update_participant_list.emit(f"\n클립보드 복사 중 오류 발생: {str(e)}")
-            import traceback
-            self.signal_manager.update_log.emit(traceback.format_exc())
+            self.signal_manager.update_log.emit(f"❌ 클립보드 복사 중 오류: {str(e)}")
     
     def append_to_log(self, message):
         """로그 영역에 메시지 추가"""
@@ -404,7 +321,57 @@ class ZoomCheckGUI(QMainWindow):
         """버튼 활성화/비활성화"""
         self.refresh_button.setEnabled(enabled)
         self.copy_button.setEnabled(enabled)
-        self.stop_button.setEnabled(not enabled)
+
+    def show_log_context_menu(self, pos):
+        """로그 영역에 컨텍스트 메뉴를 표시합니다."""
+        menu = QMenu(self.log_area)
+        
+        # 기본 복사 액션 추가
+        copy_action = QAction("복사", self.log_area)
+        copy_action.triggered.connect(self.copy_selected_log)
+        menu.addAction(copy_action)
+        
+        # 전체 복사 액션 추가
+        copy_all_action = QAction("전체 복사", self.log_area)
+        copy_all_action.triggered.connect(self.copy_all_log)
+        menu.addAction(copy_all_action)
+        
+        # 구분선 추가
+        menu.addSeparator()
+        
+        # 기본 컨텍스트 메뉴 액션들 추가
+        select_all_action = QAction("전체 선택", self.log_area)
+        select_all_action.triggered.connect(self.log_area.selectAll)
+        menu.addAction(select_all_action)
+        
+        menu.exec(self.log_area.mapToGlobal(pos))
+
+    def copy_selected_log(self):
+        """선택된 로그 텍스트를 클립보드에 복사합니다."""
+        try:
+            cursor = self.log_area.textCursor()
+            selected_text = cursor.selectedText()
+            if selected_text:
+                clipboard = QApplication.clipboard()
+                clipboard.setText(selected_text)
+                self.signal_manager.update_log.emit("✅ 선택된 로그가 클립보드에 복사되었습니다.")
+            else:
+                self.signal_manager.update_log.emit("⚠️ 복사할 텍스트가 선택되지 않았습니다.")
+        except Exception as e:
+            self.signal_manager.update_log.emit(f"❌ 로그 복사 중 오류: {str(e)}")
+
+    def copy_all_log(self):
+        """로그 영역의 모든 텍스트를 클립보드에 복사합니다."""
+        try:
+            all_text = self.log_area.toPlainText()
+            if all_text:
+                clipboard = QApplication.clipboard()
+                clipboard.setText(all_text)
+                self.signal_manager.update_log.emit("✅ 모든 로그가 클립보드에 복사되었습니다.")
+            else:
+                self.signal_manager.update_log.emit("⚠️ 복사할 로그가 없습니다.")
+        except Exception as e:
+            self.signal_manager.update_log.emit(f"❌ 전체 로그 복사 중 오류: {str(e)}")
 
 def main():
     app = QApplication(sys.argv)

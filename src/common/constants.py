@@ -36,6 +36,12 @@ NORMAL_PARTICIPANT_INITIAL_DELAY = 2.0
 # 진행 상황 로깅 간격 (초)
 PROGRESS_LOG_INTERVAL = 10
 
+# 안정성 관련 설정
+MAX_ERROR_COUNT = 10  # 최대 허용 오류 수
+MAX_SCROLL_ERRORS = 5  # 최대 허용 스크롤 오류 수
+DEFAULT_RETRY_COUNT = 3  # 기본 재시도 횟수
+RETRY_DELAY_MULTIPLIER = 2  # 재시도 간격 배수
+
 # UI 요소 관련
 PARTICIPANT_CONTROL_PATTERNS = ['list', 'item', 'participant', 'user']
 SUPPORTED_CONTROL_TYPES = ['ListItem', 'List', 'Custom']
