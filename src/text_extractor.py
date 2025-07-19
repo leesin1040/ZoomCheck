@@ -69,7 +69,8 @@ class TextExtractor:
         """재시도 기능이 포함된 참가자 추출"""
         for attempt in range(max_retries):
             try:
-                self.logger.info(f"참가자 추출 시도 {attempt + 1}/{max_retries}")
+                if max_retries > 1:
+                    self.logger.info(f"참가자 추출 시도 {attempt + 1}/{max_retries}")
                 result = self.extract_participants(window_handle)
                 
                 if result:
@@ -77,7 +78,8 @@ class TextExtractor:
                     # GUI 호환성을 위해 (참가자목록, 중복정보) 튜플 반환
                     return (result, {})
                 else:
-                    self.logger.warning(f"시도 {attempt + 1}에서 참가자를 찾지 못했습니다.")
+                    if max_retries > 1:
+                        self.logger.warning(f"시도 {attempt + 1}에서 참가자를 찾지 못했습니다.")
                     
             except Exception as e:
                 self.logger.error(f"시도 {attempt + 1}에서 오류 발생: {e}")
@@ -95,7 +97,6 @@ class TextExtractor:
         """참가자 변화를 추적하고 입퇴장 기록을 업데이트합니다."""
         try:
             if not self.tracking_enabled:
-                self.logger.info("❌ 트래킹이 비활성화되어 있습니다.")
                 return [], []
             
             # 입력 검증
@@ -117,14 +118,9 @@ class TextExtractor:
             
             current_time = self.get_current_time()
             
-            # 강화된 디버깅 로그
-            self.logger.info(f"🔍 트래킹 디버그: 현재 참가자 수: {len(current_set)}")
-            self.logger.info(f"🔍 트래킹 디버그: 이전 참가자 수: {len(self.previous_participants)}")
-            
             # 첫 번째 실행인지 확인
             if not self.previous_participants:
-                self.logger.info("🔄 첫 번째 실행: 이전 참가자 목록이 비어있습니다.")
-                self.logger.info(f"📝 기준점 설정: {len(current_set)}명의 참가자")
+                self.logger.info(f"🎯 트래킹 시작: {len(current_set)}명의 참가자")
                 self.previous_participants = current_set
                 return [], []
             
@@ -132,7 +128,6 @@ class TextExtractor:
             new_participants = current_set - self.previous_participants
             for participant in new_participants:
                 try:
-                    # 참가자 이름 안전하게 처리
                     safe_name = str(participant).strip()
                     if safe_name:
                         join_record = {
@@ -141,16 +136,15 @@ class TextExtractor:
                             'timestamp': time.time()
                         }
                         self.join_history.append(join_record)
-                        self.logger.info(f"🟢 입장: {safe_name} ({current_time})")
+                        self.logger.info(f"🟢 입장: {safe_name}")
                 except Exception as e:
                     self.logger.error(f"입장 기록 처리 중 오류: {e}")
-                    continue  # 개별 참가자 오류는 무시하고 계속 진행
+                    continue
             
             # 나간 참가자 (퇴장)
             left_participants = self.previous_participants - current_set
             for participant in left_participants:
                 try:
-                    # 참가자 이름 안전하게 처리
                     safe_name = str(participant).strip()
                     if safe_name:
                         leave_record = {
@@ -159,28 +153,28 @@ class TextExtractor:
                             'timestamp': time.time()
                         }
                         self.leave_history.append(leave_record)
-                        self.logger.info(f"🔴 퇴장: {safe_name} ({current_time})")
+                        self.logger.info(f"🔴 퇴장: {safe_name}")
                 except Exception as e:
                     self.logger.error(f"퇴장 기록 처리 중 오류: {e}")
-                    continue  # 개별 참가자 오류는 무시하고 계속 진행
+                    continue
             
-            # 상세 로그 (변화가 있을 때만, 안전하게)
+            # 변화 요약 (변화가 있을 때만)
             if new_participants or left_participants:
-                self.logger.info("=== 참가자 변화 감지 ===")
-                try:
-                    self.logger.info(f"이전 참가자: {len(self.previous_participants)}명")
-                    self.logger.info(f"현재 참가자: {len(current_set)}명")
-                    if new_participants:
-                        self.logger.info(f"새로 입장: {len(new_participants)}명")
-                    if left_participants:
-                        self.logger.info(f"퇴장: {len(left_participants)}명")
-                except Exception as e:
-                    self.logger.error(f"상세 로그 출력 중 오류: {e}")
-                self.logger.info("========================")
-            else:
-                self.logger.info("✅ 참가자 변화가 없습니다.")
+                summary = []
+                if new_participants:
+                    summary.append(f"🟢 입장: {len(new_participants)}명")
+                    for name in new_participants:
+                        summary.append(f"    - {name}")
+                if left_participants:
+                    summary.append(f"🔴 퇴장: {len(left_participants)}명")
+                    for name in left_participants:
+                        summary.append(f"    - {name}")
+                
+                self.logger.info("🎉 입퇴장 변화 요약:")
+                for line in summary:
+                    self.logger.info(line)
             
-            # 이전 참가자 목록 업데이트 (안전하게)
+            # 이전 참가자 목록 업데이트
             try:
                 self.previous_participants = current_set
             except Exception as e:
@@ -190,9 +184,6 @@ class TextExtractor:
             
         except Exception as e:
             self.logger.error(f"참가자 변화 추적 중 오류 발생: {e}")
-            import traceback
-            self.logger.error(f"트래킹 오류 상세: {traceback.format_exc()}")
-            # 프로그램이 종료되지 않도록 빈 리스트 반환
             return [], []
 
     def get_join_leave_summary(self, hours=24):
@@ -316,15 +307,16 @@ class TextExtractor:
                 return []
             
             # 창 제목에서 총 참가자 수 추출
-            window_title = window.window_text()
+            window_title = ""
             total_expected = 0
             try:
+                window_title = window.window_text()
                 if '(' in window_title and ')' in window_title:
                     total_str = window_title.split('(')[1].split(')')[0]
                     total_expected = int(total_str)
                     self.logger.info(f"창 제목에서 찾은 총 참가자 수: {total_expected}명")
-            except:
-                self.logger.info("창 제목에서 참가자 수를 추출할 수 없습니다.")
+            except Exception as e:
+                self.logger.info(f"창 제목에서 참가자 수를 추출할 수 없습니다: {e}")
             
             self.logger.info(f"참가자 창 이름: {window_title}")
             self.logger.info("참가자 목록 검색 중...")
@@ -338,19 +330,23 @@ class TextExtractor:
                 self.logger.warning(f"초기 스크롤 실패: {e}")
             
             # 참가자 수에 따른 대기 시간 조정
-            from src.common.constants import (
-                LARGE_PARTICIPANT_THRESHOLD, MEDIUM_PARTICIPANT_THRESHOLD,
-                LARGE_PARTICIPANT_INITIAL_DELAY, NORMAL_PARTICIPANT_INITIAL_DELAY,
-                LARGE_PARTICIPANT_SCROLL_ATTEMPTS, LARGE_PARTICIPANT_SCROLL_DELAY, LARGE_PARTICIPANT_CONSECUTIVE_LIMIT,
-                MEDIUM_PARTICIPANT_SCROLL_ATTEMPTS, MEDIUM_PARTICIPANT_SCROLL_DELAY, MEDIUM_PARTICIPANT_CONSECUTIVE_LIMIT,
-                NORMAL_PARTICIPANT_SCROLL_ATTEMPTS, NORMAL_PARTICIPANT_SCROLL_DELAY, NORMAL_PARTICIPANT_CONSECUTIVE_LIMIT,
-                PROGRESS_LOG_INTERVAL
-            )
-            
-            if total_expected > MEDIUM_PARTICIPANT_THRESHOLD:
-                time.sleep(LARGE_PARTICIPANT_INITIAL_DELAY)  # 대규모 참가자일 경우 더 오래 대기
-            else:
-                time.sleep(NORMAL_PARTICIPANT_INITIAL_DELAY)  # 기존 대기 시간
+            try:
+                from src.common.constants import (
+                    LARGE_PARTICIPANT_THRESHOLD, MEDIUM_PARTICIPANT_THRESHOLD,
+                    LARGE_PARTICIPANT_INITIAL_DELAY, NORMAL_PARTICIPANT_INITIAL_DELAY,
+                    LARGE_PARTICIPANT_SCROLL_ATTEMPTS, LARGE_PARTICIPANT_SCROLL_DELAY, LARGE_PARTICIPANT_CONSECUTIVE_LIMIT,
+                    MEDIUM_PARTICIPANT_SCROLL_ATTEMPTS, MEDIUM_PARTICIPANT_SCROLL_DELAY, MEDIUM_PARTICIPANT_CONSECUTIVE_LIMIT,
+                    NORMAL_PARTICIPANT_SCROLL_ATTEMPTS, NORMAL_PARTICIPANT_SCROLL_DELAY, NORMAL_PARTICIPANT_CONSECUTIVE_LIMIT,
+                    PROGRESS_LOG_INTERVAL
+                )
+                
+                if total_expected > MEDIUM_PARTICIPANT_THRESHOLD:
+                    time.sleep(LARGE_PARTICIPANT_INITIAL_DELAY)  # 대규모 참가자일 경우 더 오래 대기
+                else:
+                    time.sleep(NORMAL_PARTICIPANT_INITIAL_DELAY)  # 기존 대기 시간
+            except Exception as e:
+                self.logger.warning(f"상수 로드 실패, 기본값 사용: {e}")
+                time.sleep(1.0)  # 기본 대기 시간
 
             # 추출 시간 측정 시작
             extraction_start = time.time()
@@ -359,24 +355,30 @@ class TextExtractor:
             seen_participants = set()
             
             # 참가자 수에 따른 스크롤 설정 조정
-            if total_expected > LARGE_PARTICIPANT_THRESHOLD:
-                max_scroll_attempts = LARGE_PARTICIPANT_SCROLL_ATTEMPTS
-                scroll_delay = LARGE_PARTICIPANT_SCROLL_DELAY
-                consecutive_limit = LARGE_PARTICIPANT_CONSECUTIVE_LIMIT
-            elif total_expected > MEDIUM_PARTICIPANT_THRESHOLD:
-                max_scroll_attempts = MEDIUM_PARTICIPANT_SCROLL_ATTEMPTS
-                scroll_delay = MEDIUM_PARTICIPANT_SCROLL_DELAY
-                consecutive_limit = MEDIUM_PARTICIPANT_CONSECUTIVE_LIMIT
-            else:
-                # 소규모 참가자(50명 이하)는 더 빠르게 처리
-                if total_expected <= 50:
-                    max_scroll_attempts = 20  # 매우 적은 스크롤
-                    scroll_delay = 0.5        # 빠른 대기
-                    consecutive_limit = 2     # 빠른 종료
+            try:
+                if total_expected > LARGE_PARTICIPANT_THRESHOLD:
+                    max_scroll_attempts = LARGE_PARTICIPANT_SCROLL_ATTEMPTS
+                    scroll_delay = LARGE_PARTICIPANT_SCROLL_DELAY
+                    consecutive_limit = LARGE_PARTICIPANT_CONSECUTIVE_LIMIT
+                elif total_expected > MEDIUM_PARTICIPANT_THRESHOLD:
+                    max_scroll_attempts = MEDIUM_PARTICIPANT_SCROLL_ATTEMPTS
+                    scroll_delay = MEDIUM_PARTICIPANT_SCROLL_DELAY
+                    consecutive_limit = MEDIUM_PARTICIPANT_CONSECUTIVE_LIMIT
                 else:
-                    max_scroll_attempts = NORMAL_PARTICIPANT_SCROLL_ATTEMPTS
-                    scroll_delay = NORMAL_PARTICIPANT_SCROLL_DELAY
-                    consecutive_limit = NORMAL_PARTICIPANT_CONSECUTIVE_LIMIT
+                    # 소규모 참가자(50명 이하)는 더 빠르게 처리
+                    if total_expected <= 50:
+                        max_scroll_attempts = 20  # 매우 적은 스크롤
+                        scroll_delay = 0.5        # 빠른 대기
+                        consecutive_limit = 2     # 빠른 종료
+                    else:
+                        max_scroll_attempts = NORMAL_PARTICIPANT_SCROLL_ATTEMPTS
+                        scroll_delay = NORMAL_PARTICIPANT_SCROLL_DELAY
+                        consecutive_limit = NORMAL_PARTICIPANT_CONSECUTIVE_LIMIT
+            except Exception as e:
+                self.logger.warning(f"스크롤 설정 실패, 기본값 사용: {e}")
+                max_scroll_attempts = 20
+                scroll_delay = 0.5
+                consecutive_limit = 2
             
             # 스크롤 관련 변수
             scroll_count = 0
@@ -409,9 +411,12 @@ class TextExtractor:
                 
                 # 진행 상황 로깅 (설정된 간격마다)
                 current_time = time.time()
-                if current_time - last_progress_time > PROGRESS_LOG_INTERVAL:
-                    self.logger.info(f"진행 상황: {scroll_count}/{max_scroll_attempts} 스크롤, 현재 {len(participants)}명 발견")
-                    last_progress_time = current_time
+                try:
+                    if current_time - last_progress_time > PROGRESS_LOG_INTERVAL:
+                        self.logger.info(f"진행 상황: {scroll_count}/{max_scroll_attempts} 스크롤, 현재 {len(participants)}명 발견")
+                        last_progress_time = current_time
+                except Exception as e:
+                    self.logger.warning(f"진행 상황 로깅 실패: {e}")
                 
                 try:
                     all_elements = window.descendants()
@@ -478,127 +483,70 @@ class TextExtractor:
                                     is_participant = True
                             
                             if is_participant:
-                                # 참가자 이름 추출
-                                if ',' in text:
-                                    name = text.split(',')[0].strip()
-                                elif '(' in text:
-                                    name = text.split('(')[0].strip()
-                                else:
-                                    name = text.strip()
-                                
-                                # 이름 정리
-                                clean_name = name.split('(')[0].strip()
-                                if clean_name and len(clean_name) > 1:
+                                # 참가자 이름 정리
+                                clean_name = self.clean_participant_name(text)
+                                if clean_name and clean_name not in seen_participants:
+                                    participants.append(clean_name)
+                                    seen_participants.add(clean_name)
                                     current_batch.append(clean_name)
-                                    if clean_name not in seen_participants:
-                                        participants.append(clean_name)
-                                        seen_participants.add(clean_name)
-                                        
+                                    
                         except Exception as e:
                             error_count += 1
-                            if error_count <= 5:  # 처음 5개 오류만 로깅
-                                self.logger.debug(f"요소 처리 중 오류 (무시됨): {e}")
+                            if error_count <= 5:  # 처음 5개 오류만 로그
+                                self.logger.warning(f"요소 처리 중 오류: {e}")
                             continue
-                            
+                    
+                    # 현재 배치의 참가자 수 확인
+                    if len(current_batch) == 0:
+                        consecutive_same_view += 1
+                    else:
+                        consecutive_same_view = 0
+                        prev_count = len(participants)
+                    
+                    # 스크롤 수행
+                    if not do_scroll(window):
+                        error_count += 1
+                        if error_count > 10:  # 오류가 너무 많으면 중단
+                            self.logger.warning("오류가 너무 많아 추출을 중단합니다.")
+                            break
+                    
+                    time.sleep(scroll_delay)
+                    
                 except Exception as e:
                     error_count += 1
-                    self.logger.error(f"요소 처리 중 오류: {str(e)}")
+                    self.logger.warning(f"스크롤 반복 중 오류: {e}")
                     if error_count > 10:  # 오류가 너무 많으면 중단
-                        self.logger.error("오류가 너무 많아 추출을 중단합니다.")
+                        self.logger.warning("오류가 너무 많아 추출을 중단합니다.")
                         break
-                
-                # 스크롤 후 충분히 대기
-                time.sleep(scroll_delay)
-                
-                # 동일 참가자 수 반복 체크
-                if len(participants) == prev_count:
-                    consecutive_same_view += 1
-                else:
-                    consecutive_same_view = 0
-                prev_count = len(participants)
-                
-                # 조기 종료 조건: 모든 참가자를 찾았거나 충분히 스크롤했을 때
-                if total_expected > 0 and len(participants) >= total_expected:
-                    self.logger.info(f"모든 참가자를 찾았습니다! ({len(participants)}명)")
-                    break
-                elif scroll_count >= 5 and len(participants) > 0 and consecutive_same_view >= 2:
-                    self.logger.info(f"충분히 스크롤했고 새로운 참가자가 없어 조기 종료합니다. (현재 {len(participants)}명)")
-                    break
-                
-                # 스크롤 실행
-                if not do_scroll(window):
-                    error_count += 1
-                    if error_count > 5:
-                        self.logger.error("스크롤 오류가 너무 많아 중단합니다.")
-                        break
+                    time.sleep(scroll_delay)
+                    continue
             
             # 추출 후 안내
-            if total_expected > 0:
-                if len(participants) < total_expected:
-                    missing_count = total_expected - len(participants)
-                    missing_percentage = (missing_count / total_expected) * 100
-                    self.logger.warning(f"Zoom에 표시된 참가자 수({total_expected})와 추출된 참가자 수({len(participants)})가 다릅니다.")
-                    self.logger.warning(f"누락된 참가자: {missing_count}명 ({missing_percentage:.1f}%)")
-                    if missing_percentage > 10:
-                        self.logger.warning("높은 누락률입니다. 스크롤 횟수나 대기 시간을 늘려보세요.")
-                else:
-                    self.logger.info(f"모든 참가자를 성공적으로 추출했습니다! ({len(participants)}명)")
-            
-            total_time = time.time() - start_time
-            self.logger.info(f"[시간 측정] 참가자 추출 완료: 총 {len(participants)}명")
-            self.logger.info(f"[시간 측정] 총 소요 시간: {total_time:.3f}초")
-            if total_time > 0:
-                self.logger.info(f"[시간 측정] 평균 처리 속도: {len(participants)/total_time:.1f}명/초")
-            
-            # 오류 통계
-            if error_count > 0:
-                self.logger.info(f"처리 중 발생한 오류: {error_count}개")
-            
-            # 입퇴장 트래킹 실행 (안전하게)
             try:
-                self.logger.info(f"🎯 트래킹 시작: 활성화={self.tracking_enabled}, 참가자 수={len(participants)}")
+                extraction_end = time.time()
+                total_time = extraction_end - extraction_start
                 
-                if self.tracking_enabled:
-                    new_participants, left_participants = self.track_participant_changes(participants)
-                    
-                    # 입퇴장 정보 요약 (안전하게)
-                    if new_participants or left_participants:
-                        self.logger.info("🎉 입퇴장 변화 요약:")
-                        if new_participants:
-                            try:
-                                safe_names = [str(name).strip() for name in new_participants if str(name).strip()]
-                                self.logger.info(f"  🟢 입장: {len(new_participants)}명")
-                                if safe_names:
-                                    self.logger.info(f"    - {', '.join(safe_names[:5])}")  # 최대 5명만 표시
-                                    if len(safe_names) > 5:
-                                        self.logger.info(f"    - ... 외 {len(safe_names) - 5}명")
-                            except Exception as e:
-                                self.logger.error(f"입장 정보 출력 중 오류: {e}")
-                        
-                        if left_participants:
-                            try:
-                                safe_names = [str(name).strip() for name in left_participants if str(name).strip()]
-                                self.logger.info(f"  🔴 퇴장: {len(left_participants)}명")
-                                if safe_names:
-                                    self.logger.info(f"    - {', '.join(safe_names[:5])}")  # 최대 5명만 표시
-                                    if len(safe_names) > 5:
-                                        self.logger.info(f"    - ... 외 {len(safe_names) - 5}명")
-                            except Exception as e:
-                                self.logger.error(f"퇴장 정보 출력 중 오류: {e}")
-                    else:
-                        self.logger.info("✅ 참가자 변화가 없습니다.")
-                else:
-                    self.logger.info("❌ 트래킹이 비활성화되어 있습니다.")
+                self.logger.info(f"모든 참가자를 성공적으로 추출했습니다! ({len(participants)}명)")
+                self.logger.info(f"[시간 측정] 참가자 추출 완료: 총 {len(participants)}명")
+                self.logger.info(f"[시간 측정] 총 소요 시간: {total_time:.3f}초")
+                
+                if total_time > 0:
+                    speed = len(participants) / total_time
+                    self.logger.info(f"[시간 측정] 평균 처리 속도: {speed:.1f}명/초")
+                
+                if error_count > 0:
+                    self.logger.info(f"처리 중 발생한 오류: {error_count}개")
             except Exception as e:
-                self.logger.error(f"트래킹 실행 중 오류 발생: {e}")
-                import traceback
-                self.logger.error(traceback.format_exc())
+                self.logger.warning(f"완료 로그 출력 중 오류: {e}")
+            
+            # 트래킹은 GUI에서 별도로 호출하도록 변경
+            # 자동 트래킹 실행 제거로 중복 로그 및 크래시 방지
             
             return participants
         except Exception as e:
             self.logger.error(f"참가자 목록 추출 중 오류 발생: {str(e)}")
             import traceback
-            self.logger.error(traceback.format_exc())
+            self.logger.error(f"추출 오류 상세: {traceback.format_exc()}")
             return []
         finally:
             # COM은 __del__에서 정리됨

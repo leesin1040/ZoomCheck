@@ -30,11 +30,22 @@ class QTextEditLogger(logging.Handler):
         self.widget.setReadOnly(True)
 
     def emit(self, record):
-        msg = self.format(record)
-        self.widget.append(msg)
-        # 자동 스크롤
-        scrollbar = self.widget.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+        try:
+            msg = self.format(record)
+            if self.widget and hasattr(self.widget, 'append'):
+                self.widget.append(msg)
+                # 자동 스크롤
+                try:
+                    scrollbar = self.widget.verticalScrollBar()
+                    if scrollbar:
+                        scrollbar.setValue(scrollbar.maximum())
+                except Exception as scroll_error:
+                    # 스크롤 오류는 무시
+                    pass
+        except Exception as e:
+            # GUI 업데이트 실패 시 콘솔에 출력
+            print(f"로그 핸들러 오류: {e}")
+            print(f"원본 메시지: {record.getMessage()}")
 
 class SignalManager(QObject):
     """UI 업데이트를 위한 시그널 관리 클래스"""
@@ -44,32 +55,64 @@ class SignalManager(QObject):
 
 class ZoomCheckGUI(QMainWindow):
     def __init__(self):
-        super().__init__()
-        
-        # 기본 변수 초기화
-        self.extraction_in_progress = False
-        self.current_participants = []
-        self.current_duplicate_info = {}
-        
-        # TextExtractor 초기화
-        self.text_extractor = TextExtractor()
-        
-        # 추출 진행 상태
-        self.extraction_in_progress = False
-        
-        # 시그널 매니저 초기화
-        self.signal_manager = SignalManager()
-        
-        # UI 설정
-        self.init_ui()
-        
-        # 시그널 연결
-        self.signal_manager.update_log.connect(self.append_to_log)
-        self.signal_manager.update_participant_list.connect(self.append_to_participant_list)
-        self.signal_manager.enable_buttons.connect(self.set_buttons_enabled)
-        
-        # 로깅 설정
-        self.setup_logging()
+        try:
+            super().__init__()
+            print("GUI 초기화 시작...")
+            
+            # 기본 변수 초기화
+            self.extraction_in_progress = False
+            self.current_participants = []
+            self.current_duplicate_info = {}
+            
+            # TextExtractor 초기화
+            try:
+                self.text_extractor = TextExtractor()
+                print("TextExtractor 초기화 완료")
+            except Exception as e:
+                print(f"TextExtractor 초기화 실패: {e}")
+                self.text_extractor = None
+            
+            # 추출 진행 상태
+            self.extraction_in_progress = False
+            
+            # 시그널 매니저 초기화
+            try:
+                self.signal_manager = SignalManager()
+                print("SignalManager 초기화 완료")
+            except Exception as e:
+                print(f"SignalManager 초기화 실패: {e}")
+                return
+            
+            # UI 설정
+            try:
+                self.init_ui()
+                print("UI 초기화 완료")
+            except Exception as e:
+                print(f"UI 초기화 실패: {e}")
+                return
+            
+            # 시그널 연결
+            try:
+                self.signal_manager.update_log.connect(self.append_to_log)
+                self.signal_manager.update_participant_list.connect(self.append_to_participant_list)
+                self.signal_manager.enable_buttons.connect(self.set_buttons_enabled)
+                print("시그널 연결 완료")
+            except Exception as e:
+                print(f"시그널 연결 실패: {e}")
+            
+            # 로깅 설정
+            try:
+                self.setup_logging()
+                print("로깅 설정 완료")
+            except Exception as e:
+                print(f"로깅 설정 실패: {e}")
+                
+            print("GUI 초기화 완료")
+        except Exception as e:
+            print(f"GUI 초기화 중 치명적 오류: {e}")
+            import traceback
+            print(f"초기화 오류 상세: {traceback.format_exc()}")
+            raise
         
     def setup_logging(self):
         """로깅 핸들러 설정"""
@@ -204,40 +247,67 @@ class ZoomCheckGUI(QMainWindow):
                 return
                 
             # Zoom 창 찾기
-            window_handle = WindowFinder.find_zoom_window()
+            try:
+                window_handle = WindowFinder.find_zoom_window()
+            except Exception as e:
+                self.signal_manager.update_log.emit(f"Zoom 창 찾기 중 오류: {str(e)}")
+                return
             
             if window_handle:
                 self.signal_manager.update_log.emit("Zoom 창을 찾았습니다. 참가자 목록을 가져오는 중...")
                 
                 # 참가자 추출
-                result = self.text_extractor.extract_participants_with_retry(window_handle)
+                try:
+                    result = self.text_extractor.extract_participants_with_retry(window_handle)
+                except Exception as e:
+                    self.signal_manager.update_log.emit(f"참가자 추출 중 오류: {str(e)}")
+                    import traceback
+                    self.signal_manager.update_log.emit(f"추출 오류 상세: {traceback.format_exc()}")
+                    return
                 
                 if isinstance(result, tuple) and len(result) >= 2:
                     participants = result[0]
                     duplicate_info = result[1]
                     
                     # 결과 저장 (복사 기능용)
-                    self.current_participants = participants
-                    self.current_duplicate_info = duplicate_info
+                    try:
+                        self.current_participants = participants
+                        self.current_duplicate_info = duplicate_info
+                    except Exception as e:
+                        self.signal_manager.update_log.emit(f"결과 저장 중 오류: {str(e)}")
                     
                     if participants:
                         # 참가자 목록 표시
-                        participant_text = f"\n=== 참가자 목록 ({len(participants)}명) ===\n"
-                        for i, participant in enumerate(participants, 1):
-                            participant_text += f"{i:3d}. {participant}\n"
+                        try:
+                            participant_text = f"\n=== 참가자 목록 ({len(participants)}명) ===\n"
+                            for i, participant in enumerate(participants, 1):
+                                participant_text += f"{i:3d}. {participant}\n"
+                            
+                            # 중복 정보 표시
+                            if duplicate_info:
+                                participant_text += "\n[중복 정보]\n"
+                                for name, info in duplicate_info.items():
+                                    participant_text += f"• '{name}': {info['count']}번 발견\n"
+                                    if isinstance(info['details'], str):
+                                        participant_text += f"  → 상태: {info['details']}\n"
+                                    elif isinstance(info['details'], list):
+                                        participant_text += f"  → 상태: {info['details'][0]}\n"
+                            
+                            self.signal_manager.update_participant_list.emit(participant_text)
+                            self.signal_manager.update_log.emit(f"✅ 참가자 목록을 성공적으로 가져왔습니다. (총 {len(participants)}명)")
+                        except Exception as e:
+                            self.signal_manager.update_log.emit(f"참가자 목록 표시 중 오류: {str(e)}")
                         
-                        # 중복 정보 표시
-                        if duplicate_info:
-                            participant_text += "\n[중복 정보]\n"
-                            for name, info in duplicate_info.items():
-                                participant_text += f"• '{name}': {info['count']}번 발견\n"
-                                if isinstance(info['details'], str):
-                                    participant_text += f"  → 상태: {info['details']}\n"
-                                elif isinstance(info['details'], list):
-                                    participant_text += f"  → 상태: {info['details'][0]}\n"
-                        
-                        self.signal_manager.update_participant_list.emit(participant_text)
-                        self.signal_manager.update_log.emit(f"✅ 참가자 목록을 성공적으로 가져왔습니다. (총 {len(participants)}명)")
+                        # 안전한 트래킹 실행
+                        try:
+                            if hasattr(self.text_extractor, 'tracking_enabled') and self.text_extractor.tracking_enabled:
+                                new_participants, left_participants = self.text_extractor.track_participant_changes(participants)
+                                # 트래킹 결과는 이미 로그에 출력되므로 추가 처리 불필요
+                        except Exception as tracking_error:
+                            self.signal_manager.update_log.emit(f"⚠️ 트래킹 처리 중 오류: {str(tracking_error)}")
+                            # 트래킹 오류가 전체 프로그램을 중단시키지 않도록 함
+                            import traceback
+                            self.signal_manager.update_log.emit(f"트래킹 오류 상세: {traceback.format_exc()}")
                     else:
                         self.signal_manager.update_participant_list.emit("\n참가자 목록을 가져올 수 없습니다.")
                         self.signal_manager.update_log.emit("❌ 참가자 목록이 비어있습니다.")
@@ -249,12 +319,15 @@ class ZoomCheckGUI(QMainWindow):
                 self.signal_manager.update_log.emit("❌ Zoom 창을 찾을 수 없습니다.")
                 
         except Exception as e:
-            self.signal_manager.update_log.emit(f"❌ 참가자 목록 가져오기 중 오류 발생: {str(e)}")
+            self.signal_manager.update_log.emit(f"❌ 참가자 목록 가져오기 중 치명적 오류 발생: {str(e)}")
             import traceback
-            self.signal_manager.update_log.emit(traceback.format_exc())
+            self.signal_manager.update_log.emit(f"치명적 오류 상세: {traceback.format_exc()}")
         finally:
-            self.extraction_in_progress = False
-            self.set_buttons_enabled(True)
+            try:
+                self.extraction_in_progress = False
+                self.set_buttons_enabled(True)
+            except Exception as e:
+                self.signal_manager.update_log.emit(f"상태 초기화 중 오류: {str(e)}")
     
     def copy_to_clipboard(self):
         """최신 참가자 목록을 클립보드에 복사합니다."""
@@ -291,12 +364,15 @@ class ZoomCheckGUI(QMainWindow):
                     win32clipboard.SetClipboardText(clipboard_text, win32con.CF_UNICODETEXT)
                     win32clipboard.CloseClipboard()
                     
-                    self.signal_manager.update_log.emit("✅ 참가자 목록이 클립보드에 복사되었습니다.")
+                    self.signal_manager.update_log.emit("✅ 참가자 목록이 복사되었습니다.")
                 except Exception as clipboard_error:
                     # 실패 시 PyQt 방식으로 다시 시도
-                    clipboard = QApplication.clipboard()
-                    clipboard.setText(clipboard_text)
-                    self.signal_manager.update_log.emit("✅ 참가자 목록이 클립보드에 복사되었습니다.")
+                    try:
+                        clipboard = QApplication.clipboard()
+                        clipboard.setText(clipboard_text)
+                        self.signal_manager.update_log.emit("✅ 참가자 목록이 복사되었습니다.")
+                    except Exception as qt_error:
+                        self.signal_manager.update_log.emit(f"❌ 참가자 목록 복사 중 오류: {str(qt_error)}")
                     
             else:
                 self.signal_manager.update_log.emit("⚠️ 복사할 참가자 목록이 없습니다. 먼저 목록을 가져오세요.")
@@ -305,22 +381,44 @@ class ZoomCheckGUI(QMainWindow):
     
     def append_to_log(self, message):
         """로그 영역에 메시지 추가"""
-        self.log_area.append(message)
-        # 자동 스크롤
-        scrollbar = self.log_area.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+        try:
+            self.log_area.append(message)
+            # 자동 스크롤
+            try:
+                scrollbar = self.log_area.verticalScrollBar()
+                if scrollbar:
+                    scrollbar.setValue(scrollbar.maximum())
+            except Exception as e:
+                # 스크롤 오류는 무시
+                pass
+        except Exception as e:
+            # GUI 업데이트 실패 시 콘솔에 출력
+            print(f"로그 업데이트 실패: {e}")
     
     def append_to_participant_list(self, message):
         """참가자 목록 영역에 메시지 추가"""
-        self.participant_area.append(message)
-        # 자동 스크롤
-        scrollbar = self.participant_area.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+        try:
+            self.participant_area.append(message)
+            # 자동 스크롤
+            try:
+                scrollbar = self.participant_area.verticalScrollBar()
+                if scrollbar:
+                    scrollbar.setValue(scrollbar.maximum())
+            except Exception as e:
+                # 스크롤 오류는 무시
+                pass
+        except Exception as e:
+            # GUI 업데이트 실패 시 콘솔에 출력
+            print(f"참가자 목록 업데이트 실패: {e}")
     
     def set_buttons_enabled(self, enabled):
         """버튼 활성화/비활성화"""
-        self.refresh_button.setEnabled(enabled)
-        self.copy_button.setEnabled(enabled)
+        try:
+            self.refresh_button.setEnabled(enabled)
+            self.copy_button.setEnabled(enabled)
+        except Exception as e:
+            # 버튼 상태 변경 실패 시 콘솔에 출력
+            print(f"버튼 상태 변경 실패: {e}")
 
     def show_log_context_menu(self, pos):
         """로그 영역에 컨텍스트 메뉴를 표시합니다."""
@@ -352,9 +450,25 @@ class ZoomCheckGUI(QMainWindow):
             cursor = self.log_area.textCursor()
             selected_text = cursor.selectedText()
             if selected_text:
-                clipboard = QApplication.clipboard()
-                clipboard.setText(selected_text)
-                self.signal_manager.update_log.emit("✅ 선택된 로그가 클립보드에 복사되었습니다.")
+                # 줄바꿈 처리: QTextEdit의 selectedText()는 줄바꿈을 \u2029로 반환하므로 \n으로 변환
+                selected_text = selected_text.replace('\u2029', '\n')
+                
+                # 윈도우 API를 사용한 클립보드 접근
+                try:
+                    import win32clipboard
+                    import win32con
+                    
+                    win32clipboard.OpenClipboard()
+                    win32clipboard.EmptyClipboard()
+                    win32clipboard.SetClipboardText(selected_text, win32con.CF_UNICODETEXT)
+                    win32clipboard.CloseClipboard()
+                    
+                    self.signal_manager.update_log.emit("✅ 선택된 로그가 복사되었습니다.")
+                except Exception as clipboard_error:
+                    # 실패 시 PyQt 방식으로 다시 시도
+                    clipboard = QApplication.clipboard()
+                    clipboard.setText(selected_text)
+                    self.signal_manager.update_log.emit("✅ 선택된 로그가 복사되었습니다.")
             else:
                 self.signal_manager.update_log.emit("⚠️ 복사할 텍스트가 선택되지 않았습니다.")
         except Exception as e:
@@ -365,19 +479,47 @@ class ZoomCheckGUI(QMainWindow):
         try:
             all_text = self.log_area.toPlainText()
             if all_text:
-                clipboard = QApplication.clipboard()
-                clipboard.setText(all_text)
-                self.signal_manager.update_log.emit("✅ 모든 로그가 클립보드에 복사되었습니다.")
+                # 윈도우 API를 사용한 클립보드 접근
+                try:
+                    import win32clipboard
+                    import win32con
+                    
+                    win32clipboard.OpenClipboard()
+                    win32clipboard.EmptyClipboard()
+                    win32clipboard.SetClipboardText(all_text, win32con.CF_UNICODETEXT)
+                    win32clipboard.CloseClipboard()
+                    
+                    self.signal_manager.update_log.emit("✅ 모든 로그가 복사되었습니다.")
+                except Exception as clipboard_error:
+                    # 실패 시 PyQt 방식으로 다시 시도
+                    clipboard = QApplication.clipboard()
+                    clipboard.setText(all_text)
+                    self.signal_manager.update_log.emit("✅ 모든 로그가 복사되었습니다.")
             else:
                 self.signal_manager.update_log.emit("⚠️ 복사할 로그가 없습니다.")
         except Exception as e:
             self.signal_manager.update_log.emit(f"❌ 전체 로그 복사 중 오류: {str(e)}")
 
 def main():
-    app = QApplication(sys.argv)
-    gui = ZoomCheckGUI()
-    gui.show()
-    sys.exit(app.exec())  # PyQt6에서는 exec_() 대신 exec() 사용
+    try:
+        print("프로그램 시작...")
+        app = QApplication(sys.argv)
+        print("QApplication 생성 완료")
+        
+        gui = ZoomCheckGUI()
+        print("GUI 생성 완료")
+        
+        gui.show()
+        print("GUI 표시 완료")
+        
+        print("이벤트 루프 시작...")
+        sys.exit(app.exec())  # PyQt6에서는 exec_() 대신 exec() 사용
+    except Exception as e:
+        print(f"프로그램 실행 중 치명적 오류: {e}")
+        import traceback
+        print(f"오류 상세: {traceback.format_exc()}")
+        input("엔터를 눌러 종료하세요...")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main() 
