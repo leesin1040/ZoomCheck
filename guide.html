@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>매니저랩 크롬 확장프로그램 설치 가이드</title>
+    <link rel="icon" href="icon32.png" type="image/png" />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', '맑은 고딕',
+          sans-serif;
+        background: #f5f7fa;
+        color: #333;
+        line-height: 1.7;
+        padding: 40px 20px;
+      }
+      .container {
+        max-width: 720px;
+        margin: 0 auto;
+        background: #fff;
+        border-radius: 16px;
+        box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+        padding: 48px 40px;
+      }
+      h1 {
+        font-size: 26px;
+        font-weight: 700;
+        text-align: center;
+        margin-bottom: 8px;
+        color: #1a1a1a;
+      }
+      .subtitle {
+        text-align: center;
+        color: #888;
+        font-size: 14px;
+        margin-bottom: 36px;
+      }
+      h2 {
+        font-size: 20px;
+        font-weight: 700;
+        color: #2c3e50;
+        margin-top: 36px;
+        margin-bottom: 16px;
+        padding-bottom: 8px;
+        border-bottom: 2px solid #e8ecf1;
+      }
+      .steps {
+        list-style: none;
+        counter-reset: step-counter;
+      }
+      .steps li {
+        counter-increment: step-counter;
+        display: flex;
+        align-items: flex-start;
+        gap: 14px;
+        margin-bottom: 18px;
+        padding: 14px 16px;
+        background: #f8fafc;
+        border-radius: 10px;
+        border-left: 4px solid #4a90d9;
+      }
+      .steps li::before {
+        content: counter(step-counter);
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        background: #4a90d9;
+        color: #fff;
+        font-size: 14px;
+        font-weight: 700;
+        border-radius: 50%;
+      }
+      .steps li span {
+        padding-top: 3px;
+      }
+      .zoom-steps {
+        counter-reset: step-counter;
+      }
+      .zoom-steps li {
+        border-left-color: #10b981;
+      }
+      .zoom-steps li::before {
+        background: #10b981;
+      }
+      code {
+        background: #eef2f7;
+        color: #4a90d9;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 13px;
+        font-family: 'SF Mono', 'Consolas', monospace;
+        word-break: break-all;
+      }
+      code.copyable {
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      code.copyable:hover {
+        background: #d6e4f0;
+      }
+      .feature-card {
+        margin-top: 12px;
+        padding: 18px 20px;
+        background: linear-gradient(135deg, #e8f4fd, #f0f4ff);
+        border-radius: 10px;
+        border: 1px solid #d0e3f5;
+      }
+      .feature-card .label {
+        display: inline-block;
+        background: #4a90d9;
+        color: #fff;
+        font-size: 13px;
+        font-weight: 600;
+        padding: 3px 10px;
+        border-radius: 6px;
+        margin-bottom: 8px;
+      }
+      .feature-card p {
+        font-size: 15px;
+        color: #444;
+      }
+      .tip {
+        margin-top: 8px;
+        padding: 12px 16px;
+        background: #fffbeb;
+        border-radius: 8px;
+        border: 1px solid #fde68a;
+        font-size: 14px;
+        color: #92400e;
+      }
+      .notice {
+        margin-top: 36px;
+        padding: 16px 20px;
+        background: #fef2f2;
+        border-radius: 10px;
+        border: 1px solid #fecaca;
+      }
+      .notice h2 {
+        color: #dc2626;
+        border-bottom: none;
+        margin-top: 0;
+        margin-bottom: 10px;
+        padding-bottom: 0;
+        font-size: 16px;
+      }
+      .notice ul {
+        list-style: disc;
+        padding-left: 20px;
+      }
+      .notice li {
+        font-size: 14px;
+        color: #7f1d1d;
+        margin-bottom: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>매니저랩 크롬 확장프로그램</h1>
+      <p class="subtitle">설치 및 사용 가이드</p>
+
+      <h2>설치 방법</h2>
+      <ol class="steps">
+        <li>
+          <span>
+            깃허브 저장소에서 우측 상단의 <strong>"Code"</strong> 버튼을 클릭한
+            후 <strong>"Download ZIP"</strong>을 선택하여 ZIP 파일을
+            다운로드합니다.
+          </span>
+        </li>
+        <li>
+          <span>
+            다운로드 받은 ZIP 파일을 원하는 위치에 <strong>압축 해제</strong>합니다.
+          </span>
+        </li>
+        <li>
+          <span>
+            크롬 브라우저 주소창에
+            <code class="copyable" onclick="navigator.clipboard.writeText('chrome://extensions').then(()=>{this.dataset.orig=this.textContent;this.textContent='복사됨!';setTimeout(()=>{this.textContent=this.dataset.orig},1500)})" title="클릭하면 복사됩니다">chrome://extensions</code>
+            를 입력하고 이동합니다.
+          </span>
+        </li>
+        <li>
+          <span>
+            우측 상단의 <strong>"개발자 모드"</strong> 토글을 켭니다.
+          </span>
+        </li>
+        <li>
+          <span>
+            <strong>"압축해제된 확장 프로그램을 로드합니다"</strong> 버튼을
+            클릭합니다.
+          </span>
+        </li>
+        <li>
+          <span>
+            압축 해제한 <strong>폴더를 선택</strong>하여 확장프로그램을
+            설치합니다.
+          </span>
+        </li>
+        <li>
+          <span>
+            설치가 완료되면 크롬 브라우저 우측 상단에 확장프로그램 아이콘이
+            표시됩니다. (고정은 선택)
+          </span>
+        </li>
+      </ol>
+
+      <h2>웹 버전 줌 접속 방법</h2>
+      <ol class="steps zoom-steps">
+        <li>
+          <span>
+            줌 링크를 클릭하면 나타나는 브라우저 페이지에서 <strong>"취소"</strong>를 누릅니다.
+          </span>
+        </li>
+        <li>
+          <span>
+            잠시 기다리면 하단에 <strong>"Join from Your Browser"</strong> 버튼이 나타납니다.
+          </span>
+        </li>
+        <li>
+          <span>
+            해당 버튼을 클릭하면 <strong>웹 버전 줌</strong>으로 접속됩니다.
+          </span>
+        </li>
+      </ol>
+
+      <h2>사용 방법</h2>
+      <div class="feature-card">
+        <span class="label">줌 참가자 복사</span>
+        <p>
+          웹 버전 줌에서 참가자 목록의 이름을 추출해 줄바꿈으로 복사합니다.
+        </p>
+      </div>
+      <div class="tip">
+        복사된 내용은 구글 스프레드시트 등에 바로 붙여넣어 관리할 수 있습니다.
+      </div>
+
+      <div class="notice">
+        <h2>주의사항</h2>
+        <ul>
+          <li>이 확장프로그램은 내부용으로 제작되었으며, Chrome Web Store에 등록되어 있지 않습니다.</li>
+          <li>각 기능은 해당 페이지에서만 정상적으로 동작합니다.</li>
+        </ul>
+      </div>
+    </div>
+  </body>
+</html>
